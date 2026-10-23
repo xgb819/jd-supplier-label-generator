@@ -2,7 +2,7 @@
 """
 JD Supplier Label Generator 构建脚本
 1. 使用 PyInstaller 打包 gui_app.py 为 dist/JD Supplier Label Generator.exe
-2. 使用 Inno Setup 打包为安装程序 dist/jd-supplier-label-generator-v1.1.0-20260819.exe（需已安装 Inno Setup）
+2. 使用 Inno Setup 打包为安装程序 dist/jd-supplier-label-generator-v1.1.1-20261023.exe（需已安装 Inno Setup）
 """
 import subprocess
 import sys
@@ -45,6 +45,7 @@ def build_installer():
     iscc_paths = [
         Path(os.environ.get("ProgramFiles(x86)", "")) / "Inno Setup 6" / "ISCC.exe",
         Path(os.environ.get("ProgramFiles", "")) / "Inno Setup 6" / "ISCC.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Inno Setup 6" / "ISCC.exe",
         Path("D:/Inno Setup 6/ISCC.exe"),
     ]
     iscc = None

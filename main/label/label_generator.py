@@ -207,8 +207,14 @@ class LabelGenerator:
             output_path = os.path.join(output_dir, filename)
             print(f"输出路径: {output_path}")
             
-            # 根据 SN 长度查找模板文件
-            template_path = os.path.join(os.path.dirname(self.template_path), f"label_{sn_len}.pld")
+            # 根据 SN 长度在当前模板系列中查找模板。
+            # 无69码模板必须保持在 label_no_69_* 系列，不能退回普通 label_* 模板。
+            template_dir = os.path.dirname(self.template_path)
+            template_name = os.path.basename(self.template_path)
+            if template_name.startswith("label_no_69_"):
+                template_path = os.path.join(template_dir, f"label_no_69_{sn_len}.pld")
+            else:
+                template_path = os.path.join(template_dir, f"label_{sn_len}.pld")
             
             if not os.path.exists(template_path):
                 # 如果按长度命名的模板不存在，使用默认模板

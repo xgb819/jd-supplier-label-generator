@@ -12,7 +12,7 @@ from typing import Dict
 
 APP_NAME = "京东供应商标签生成器"
 APP_SLUG = "jd-supplier-label-generator"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 GITHUB_REPOSITORY = "xgb819/jd-supplier-label-generator"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPOSITORY}/releases"
 GITHUB_LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest"
@@ -27,11 +27,18 @@ QWidget {
 }
 
 QMainWindow, QWidget#appRoot {
-    background: #e9eef5;
+    background: #f5f6f8;
 }
 
-QWidget#workspace {
+QFrame#toolSwitcher {
     background: transparent;
+    border: none;
+}
+
+QStackedWidget#toolPages,
+QWidget#workspace,
+QWidget#returnPickupWorkspace {
+    background: #ffffff;
     border: none;
 }
 
@@ -81,7 +88,7 @@ QPushButton {
     border: 1px solid #d7dce2;
     border-radius: 6px;
     color: #374151;
-    min-height: 18px;
+    min-height: 20px;
     padding: 4px 12px;
 }
 
@@ -118,6 +125,77 @@ QPushButton[role="primary"]:hover {
 
 QPushButton[role="quiet"] {
     background: transparent;
+}
+
+QPushButton#topSettingsButton,
+QPushButton#topSettingsButton:hover,
+QPushButton#topSettingsButton:pressed {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+}
+
+QTabBar#toolTabs {
+    background: transparent;
+}
+
+QTabBar#toolTabs::tab {
+    background: transparent;
+    border: 1px solid transparent;
+    color: #374151;
+    min-height: 22px;
+    padding: 7px 18px;
+}
+
+QTabBar#toolTabs::tab:hover:!selected {
+    background: transparent;
+    color: #2563eb;
+}
+
+QTabBar#toolTabs::tab:selected {
+    background: transparent;
+    border-top: 2px solid transparent;
+    border-left: 2px solid transparent;
+    border-right: 2px solid transparent;
+    border-bottom: 1px solid transparent;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    color: #1d4ed8;
+    font-weight: 600;
+}
+
+QTabWidget#generationOptionsTabs::pane {
+    background: transparent;
+    border: none;
+    top: -1px;
+}
+
+QTabBar#generationOptionsTabBar {
+    background: transparent;
+    border: none;
+}
+
+QTabBar#generationOptionsTabBar::tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: #374151;
+    min-height: 36px;
+    margin-right: 28px;
+    padding: 0;
+}
+
+QTabBar#generationOptionsTabBar::tab:hover:!selected {
+    background: transparent;
+    color: #2563eb;
+}
+
+QTabBar#generationOptionsTabBar::tab:selected {
+    background: transparent;
+    border-bottom: 2px solid transparent;
+    color: #2563eb;
+    font-weight: 600;
 }
 
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
@@ -360,13 +438,16 @@ from PyQt5.QtWidgets import (
     QLabel, QComboBox, QSpinBox, QMessageBox, QProgressBar,
     QTextEdit, QHeaderView, QDialog, QGridLayout, QLineEdit, QInputDialog,
     QCheckBox, QScrollArea, QGroupBox, QFrame, QListWidget, QListWidgetItem,
-    QAbstractItemView, QSizePolicy
+    QAbstractItemView, QSizePolicy, QStackedWidget, QTabBar, QTabWidget
 )
 from PyQt5.QtCore import (
     Qt, QThread, pyqtSignal, QSize, QTimer, QObject, QEvent, QPoint,
-    QVariantAnimation, QEasingCurve
+    QVariantAnimation, QEasingCurve, QRectF
 )
-from PyQt5.QtGui import QFont, QColor, QIcon
+from PyQt5.QtGui import (
+    QFont, QColor, QIcon, QPainter, QPen, QBrush,
+    QLinearGradient, QPainterPath
+)
 from main.common.config import ConfigManager
 import webbrowser
 from main.label.label_generator import LabelGenerator
@@ -375,6 +456,187 @@ from main.label.carton_mark_generator import (
     ShantouBCartonMarkGenerator,
     ShantouBValidationError,
 )
+
+
+class FadingTabBar(QTabBar):
+    """选中项使用由上向下渐隐的蓝色轮廓。"""
+
+    def paintEvent(self, event):
+        index = self.currentIndex()
+        if index < 0:
+            super().paintEvent(event)
+            return
+
+        rect = self.tabRect(index).adjusted(1, 1, -1, 0)
+        radius = 8
+
+        # 先在轮廓内侧绘制白色背景，避免白色覆盖到渐隐描边区域。
+        inner = rect.adjusted(2, 2, -2, 0)
+        inner_radius = 6
+        background_path = QPainterPath()
+        background_path.moveTo(inner.left(), inner.bottom())
+        background_path.lineTo(inner.left(), inner.top() + inner_radius)
+        background_path.quadTo(
+            inner.left(), inner.top(), inner.left() + inner_radius, inner.top()
+        )
+        background_path.lineTo(inner.right() - inner_radius, inner.top())
+        background_path.quadTo(
+            inner.right(), inner.top(), inner.right(), inner.top() + inner_radius
+        )
+        background_path.lineTo(inner.right(), inner.bottom())
+        background_path.closeSubpath()
+
+        background_painter = QPainter(self)
+        background_painter.setRenderHint(QPainter.Antialiasing, True)
+        background_painter.setPen(Qt.NoPen)
+        background_painter.setBrush(QColor("#ffffff"))
+        background_painter.drawPath(background_path)
+        background_painter.end()
+
+        # 再由 Qt 绘制 Tab 文字和未选中项。
+        super().paintEvent(event)
+
+        # 最后在白色背景外侧绘制由上向下渐隐的蓝色轮廓。
+        gradient = QLinearGradient(0, rect.top(), 0, rect.bottom())
+        gradient.setColorAt(0.0, QColor(59, 130, 246, 255))
+        gradient.setColorAt(0.55, QColor(59, 130, 246, 150))
+        gradient.setColorAt(1.0, QColor(59, 130, 246, 0))
+
+        path = QPainterPath()
+        path.moveTo(rect.left(), rect.bottom() + 1)
+        path.lineTo(rect.left(), rect.top() + radius)
+        path.quadTo(rect.left(), rect.top(), rect.left() + radius, rect.top())
+        path.lineTo(rect.right() - radius, rect.top())
+        path.quadTo(rect.right(), rect.top(), rect.right(), rect.top() + radius)
+        path.lineTo(rect.right(), rect.bottom() + 1)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QBrush(gradient), 2))
+        painter.drawPath(path)
+        painter.end()
+
+
+class ContentTopOuterGlow(QWidget):
+    """在白色内容区外侧向上绘制灰色投影。"""
+
+    HEIGHT = 10
+
+    def __init__(self, tab_bar, parent):
+        super().__init__(parent)
+        self.tab_bar = tab_bar
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setFixedHeight(self.HEIGHT)
+        self.tab_bar.currentChanged.connect(lambda _index: self.update())
+        parent.installEventFilter(self)
+        self._sync_geometry()
+
+    def _sync_geometry(self):
+        parent = self.parentWidget()
+        self.setGeometry(0, parent.height() - self.HEIGHT, parent.width(), self.HEIGHT)
+        self.stackUnder(self.tab_bar)
+
+    def eventFilter(self, watched, event):
+        if watched is self.parentWidget() and event.type() in (
+            QEvent.Resize, QEvent.Show
+        ):
+            self._sync_geometry()
+        return super().eventFilter(watched, event)
+
+    def paintEvent(self, event):
+        index = self.tab_bar.currentIndex()
+        if index < 0:
+            return
+
+        # 与 FadingTabBar 中蓝色外描边使用完全相同的水平边界。
+        selected_rect = self.tab_bar.tabRect(index).adjusted(1, 0, -1, 0)
+        selected_left = self.mapFromGlobal(
+            self.tab_bar.mapToGlobal(selected_rect.topLeft())
+        ).x()
+        selected_right = self.mapFromGlobal(
+            self.tab_bar.mapToGlobal(selected_rect.topRight())
+        ).x() + 1
+        selected_left = max(0, min(self.width(), selected_left))
+        selected_right = max(0, min(self.width(), selected_right))
+
+        gradient = QLinearGradient(0, 0, 0, self.height())
+        gradient.setColorAt(0.0, QColor(15, 23, 42, 0))
+        gradient.setColorAt(0.4, QColor(15, 23, 42, 4))
+        gradient.setColorAt(0.75, QColor(15, 23, 42, 11))
+        gradient.setColorAt(1.0, QColor(15, 23, 42, 22))
+
+        painter = QPainter(self)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(gradient))
+        if selected_left > 0:
+            painter.drawRect(0, 0, selected_left, self.height())
+        if selected_right < self.width():
+            painter.drawRect(
+                selected_right, 0, self.width() - selected_right, self.height()
+            )
+        painter.end()
+
+
+class SlidingUnderlineTabBar(QTabBar):
+    """使用平滑移动的蓝色下划线标记当前页签。"""
+
+    TAB_GAP = 28
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDrawBase(False)
+        self._indicator_rect = QRectF()
+        self._indicator_animation = QVariantAnimation(self)
+        self._indicator_animation.setDuration(180)
+        self._indicator_animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._indicator_animation.valueChanged.connect(self._update_indicator)
+        self.currentChanged.connect(self._animate_indicator)
+
+    def _tab_indicator_rect(self, index):
+        if index < 0 or index >= self.count():
+            return QRectF()
+        tab_rect = self.tabRect(index)
+        indicator_width = max(1, tab_rect.width() - self.TAB_GAP)
+        return QRectF(tab_rect.left(), self.height() - 2, indicator_width, 2)
+
+    def _update_indicator(self, value):
+        self._indicator_rect = QRectF(value)
+        self.update()
+
+    def _animate_indicator(self, index):
+        target = self._tab_indicator_rect(index)
+        if target.isEmpty():
+            return
+        start = self._indicator_rect
+        if start.isEmpty():
+            self._indicator_rect = target
+            self.update()
+            return
+        self._indicator_animation.stop()
+        self._indicator_animation.setStartValue(start)
+        self._indicator_animation.setEndValue(target)
+        self._indicator_animation.start()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._indicator_rect = self._tab_indicator_rect(self.currentIndex())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._indicator_animation.state() != QVariantAnimation.Running:
+            self._indicator_rect = self._tab_indicator_rect(self.currentIndex())
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._indicator_rect.isEmpty():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#2563eb"))
+        painter.drawRoundedRect(self._indicator_rect, 1, 1)
+        painter.end()
 
 
 class PointerCursorFilter(QObject):
@@ -436,7 +698,9 @@ class PointerCursorFilter(QObject):
         animation = button._button_hover_animation
         animation.stop()
         animation.setStartValue(button._button_hover_color)
-        if hovering:
+        if hovering and button.property("toolNavigation") and button.isChecked():
+            target = self.NORMAL_PRIMARY_COLOR
+        elif hovering:
             target = (
                 self.HOVER_PRIMARY_COLOR
                 if self._is_primary(button)
@@ -914,7 +1178,7 @@ class PropellerFilenameDialog(QDialog):
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(8)
-        
+
         # 标签
         label = QLabel("请为以下螺旋桨输入文件名：")
         layout.addWidget(label)
@@ -1024,7 +1288,7 @@ class SupplierLabelGeneratorWindow(QMainWindow):
         
         self.setWindowTitle(APP_NAME)
         self.setObjectName("mainWindow")
-        self.setFixedSize(420, 492)
+        self.setFixedSize(420, 560)
         
         # Excel导入相关
         self.current_excel_file = None
@@ -1033,14 +1297,13 @@ class SupplierLabelGeneratorWindow(QMainWindow):
         # 品牌-工作表映射关系
         self.sheet_mapping = self.load_sheet_mapping()
         
-        # 品牌-工作表规则关系
-        self.sheet_rules = self.load_sheet_rules()
-        
         # 应用版本和导出路径
         self.app_version = APP_VERSION
         self.export_path = self.config_manager.get('export_path', os.path.expanduser('~/Desktop'))
 
         self.init_ui()
+        # 主窗口高度随当前工具页的必要内容调整。
+        self._fit_main_window_to_current_page()
 
         # 启动后延迟自动检查更新（不阻塞界面）
         QTimer.singleShot(1500, self.run_startup_update_check)
@@ -1052,7 +1315,591 @@ class SupplierLabelGeneratorWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(self.create_label_tool())
+        main_layout.setSpacing(0)
+
+        switcher = QFrame()
+        switcher.setObjectName("toolSwitcher")
+        self.tool_switcher = switcher
+        switcher_layout = QHBoxLayout(switcher)
+        switcher_layout.setContentsMargins(16, 16, 16, 0)
+        switcher_layout.setSpacing(8)
+
+        self.tool_tabs = FadingTabBar()
+        self.tool_tabs.setObjectName("toolTabs")
+        self.tool_tabs.setExpanding(True)
+        self.tool_tabs.setDrawBase(False)
+        self.tool_tabs.addTab("标签箱唛生成")
+        self.tool_tabs.addTab("预约取货制表")
+        switcher_layout.addWidget(self.tool_tabs, 1)
+
+        self.tool_pages = QStackedWidget()
+        self.tool_pages.setObjectName("toolPages")
+        self.tool_pages.addWidget(self.create_label_tool())
+        self.tool_pages.addWidget(self.create_return_pickup_tool())
+        self.content_top_shadow = ContentTopOuterGlow(
+            self.tool_tabs, switcher
+        )
+
+        self.selected_tab_overlap = QFrame(central_widget)
+        self.selected_tab_overlap.setStyleSheet(
+            "background: #ffffff; border: none;"
+        )
+        self.selected_tab_overlap.setFixedHeight(2)
+        self.selected_tab_overlap.setAttribute(
+            Qt.WA_TransparentForMouseEvents, True
+        )
+
+        self.tool_tabs.currentChanged.connect(self.switch_tool_page)
+
+        main_layout.addWidget(switcher)
+        main_layout.addWidget(self.tool_pages, 1)
+        self.selected_tab_overlap.raise_()
+        QTimer.singleShot(0, self._update_selected_tab_overlap)
+        self.switch_tool_page(0)
+
+    def switch_tool_page(self, index):
+        """切换主工具页面，并同步顶部 Tab。"""
+        self.tool_pages.setCurrentIndex(index)
+        if self.tool_tabs.currentIndex() != index:
+            self.tool_tabs.setCurrentIndex(index)
+        QTimer.singleShot(0, self._fit_main_window_to_current_page)
+        QTimer.singleShot(0, self._update_selected_tab_overlap)
+
+    def _fit_main_window_to_current_page(self):
+        """两个工具页保持相同的紧凑窗口高度。"""
+        if self.tool_pages.count() == 0:
+            return
+        compact_page = self.tool_pages.widget(0)
+        target_height = (
+            self.tool_switcher.sizeHint().height()
+            + compact_page.sizeHint().height()
+        )
+        self.setFixedSize(420, target_height)
+
+    def _update_selected_tab_overlap(self):
+        """让页签白色背景向下重叠 1 像素，同时避开蓝色侧边。"""
+        index = self.tool_tabs.currentIndex()
+        if index < 0:
+            self.selected_tab_overlap.hide()
+            return
+
+        inner_rect = self.tool_tabs.tabRect(index).adjusted(3, 0, -3, 0)
+        left = self.tool_tabs.mapTo(
+            self.centralWidget(), inner_rect.topLeft()
+        ).x()
+        content_top = self.tool_pages.mapTo(
+            self.centralWidget(), QPoint(0, 0)
+        ).y()
+        self.selected_tab_overlap.setGeometry(
+            left, content_top - 1, inner_rect.width(), 2
+        )
+        self.selected_tab_overlap.show()
+        self.selected_tab_overlap.raise_()
+
+    def create_return_pickup_tool(self):
+        """创建预约取货制表工具页面。"""
+        self.return_pickup_files = {}
+        widget = QWidget()
+        widget.setObjectName("returnPickupWorkspace")
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(16)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(12)
+
+        title = QLabel("工作区")
+        title.setObjectName("sectionTitle")
+
+        self.return_file_name_label = ElidedLabel("尚未导入 3 个工作表文件")
+        self.return_file_name_label.setObjectName("mutedText")
+        self.return_file_name_label.setAlignment(
+            Qt.AlignRight | Qt.AlignVCenter
+        )
+        self.return_file_name_label.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Preferred
+        )
+
+        title_layout = QHBoxLayout()
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(12)
+        title_layout.addWidget(title, 0, Qt.AlignLeft)
+        title_layout.addWidget(self.return_file_name_label, 1)
+        card_layout.addLayout(title_layout)
+
+        buttons_layout = QVBoxLayout()
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(8)
+
+        self.return_import_btn = QPushButton("导入所需表格")
+        self.return_import_btn.clicked.connect(self.import_return_pickup_files)
+        self.return_import_btn.setToolTip(
+            "选择退货订单明细、物流预约数据和机型表，可一次选择多个文件"
+        )
+        buttons_layout.addWidget(self.return_import_btn)
+
+        self.return_export_btn = QPushButton("生成预约取货表")
+        self.return_export_btn.setProperty("role", "primary")
+        self.return_export_btn.setEnabled(False)
+        self.return_export_btn.setToolTip("请先导入所需的 3 个工作表文件")
+        self.return_export_btn.clicked.connect(self.generate_return_pickup_table)
+        buttons_layout.addWidget(self.return_export_btn)
+        card_layout.addLayout(buttons_layout)
+
+        layout.addLayout(card_layout)
+        layout.addStretch(1)
+        return widget
+
+    @staticmethod
+    def _normalize_excel_id(value):
+        """将 Excel 中可能被读成数字的业务编号统一为字符串。"""
+        if value is None:
+            return ""
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        text = str(value).strip()
+        if text.endswith(".0") and text[:-2].isdigit():
+            return text[:-2]
+        return text
+
+    def _classify_return_pickup_file(self, file_path):
+        """根据表头识别三类预约取货来源文件。"""
+        import openpyxl
+
+        # 部分京东导出文件的工作表尺寸元数据不完整，普通模式才能读取完整表头。
+        workbook = openpyxl.load_workbook(file_path, data_only=True)
+        detected = set()
+        for worksheet in workbook.worksheets:
+            headers = {
+                str(cell.value).strip()
+                for cell in worksheet[1]
+                if cell.value not in (None, "")
+            }
+            if {
+                "退货单号", "商品编码", "实退数量", "退货机构", "制单日期"
+            }.issubset(headers):
+                detected.add("returns")
+            if {"业务单号", "运单号"}.issubset(headers):
+                detected.add("logistics")
+            if {"SKU", "编码"}.issubset(headers):
+                detected.add("models")
+        workbook.close()
+        if len(detected) != 1:
+            return None
+        return detected.pop()
+
+    def _update_return_pickup_import_state(self):
+        names = {
+            "returns": "退货订单明细",
+            "logistics": "物流预约数据",
+            "models": "机型表",
+        }
+        missing = [
+            label for key, label in names.items()
+            if key not in self.return_pickup_files
+        ]
+        imported_count = 3 - len(missing)
+        if not missing:
+            status = "已导入 3/3 个工作表文件"
+        elif imported_count:
+            status = f"已导入 {imported_count}/3，缺少{'、'.join(missing)}"
+        else:
+            status = "尚未导入 3 个工作表文件"
+        self.return_file_name_label.setText(status)
+        self.return_file_name_label.setToolTip("\n".join(
+            f"{names[key]}：{os.path.basename(path)}"
+            for key, path in self.return_pickup_files.items()
+        ))
+        ready = not missing
+        self.return_export_btn.setEnabled(ready)
+        self.return_export_btn.setToolTip(
+            "" if ready else f"还需导入：{'、'.join(missing)}"
+        )
+
+    def import_return_pickup_files(self):
+        """导入并自动识别预约取货制表所需的三个文件。"""
+        try:
+            import openpyxl  # noqa: F401
+        except ImportError:
+            QMessageBox.warning(
+                self, "警告", "需要安装 openpyxl 库。请运行: pip install openpyxl"
+            )
+            return
+
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "选择退货订单明细、物流预约数据和机型表",
+            "",
+            "Excel 文件 (*.xlsx);;所有文件 (*)",
+        )
+        if not file_paths:
+            return
+
+        unrecognized = []
+        failed = []
+        for file_path in file_paths:
+            try:
+                file_type = self._classify_return_pickup_file(file_path)
+                if file_type:
+                    self.return_pickup_files[file_type] = file_path
+                else:
+                    unrecognized.append(os.path.basename(file_path))
+            except Exception as error:
+                failed.append(f"{os.path.basename(file_path)}：{error}")
+
+        self._update_return_pickup_import_state()
+        messages = []
+        if unrecognized:
+            messages.append("无法识别：" + "、".join(unrecognized))
+        if failed:
+            messages.append("读取失败：\n" + "\n".join(failed))
+        if messages:
+            QMessageBox.warning(self, "部分文件未导入", "\n\n".join(messages))
+
+    def generate_return_pickup_table(self):
+        """将三张来源表汇总为预约取货表。"""
+        required = {"returns", "logistics", "models"}
+        if not required.issubset(self.return_pickup_files):
+            self._update_return_pickup_import_state()
+            QMessageBox.warning(self, "警告", "请先导入所需的 3 个工作表文件")
+            return
+
+        default_name = "预约取货表.xlsx"
+        default_path = os.path.join(self.export_path, default_name)
+        output_path, _ = QFileDialog.getSaveFileName(
+            self, "保存预约取货表", default_path, "Excel 文件 (*.xlsx)"
+        )
+        if not output_path:
+            return
+        if not output_path.lower().endswith(".xlsx"):
+            output_path += ".xlsx"
+
+        try:
+            summary = self._build_return_pickup_workbook(output_path)
+            QMessageBox.information(
+                self,
+                "生成完成",
+                f"预约取货表已生成。\n\n"
+                f"商品：{summary['sku_count']} 个\n"
+                f"退货单：{summary['order_count']} 个\n"
+                f"合计：{summary['total_quantity']} 件\n\n"
+                f"保存位置：{output_path}",
+            )
+        except Exception as error:
+            QMessageBox.critical(self, "生成失败", str(error))
+
+    def _build_return_pickup_workbook(self, output_path):
+        """执行预约取货表的数据关联、透视和格式化。"""
+        import re
+        from collections import defaultdict
+        from datetime import date, datetime
+        from decimal import Decimal, InvalidOperation
+
+        import openpyxl
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+        from openpyxl.utils import get_column_letter
+
+        def header_map(worksheet):
+            return {
+                str(worksheet.cell(1, column).value).strip(): column
+                for column in range(1, worksheet.max_column + 1)
+                if worksheet.cell(1, column).value not in (None, "")
+            }
+
+        def quantity(value):
+            if value in (None, ""):
+                return Decimal("0")
+            try:
+                return Decimal(str(value))
+            except InvalidOperation as error:
+                raise ValueError(f"无法识别实退数量：{value}") from error
+
+        def excel_number_or_text(value):
+            text = self._normalize_excel_id(value)
+            return int(text) if text.isdigit() else text
+
+        returns_wb = openpyxl.load_workbook(
+            self.return_pickup_files["returns"], data_only=True
+        )
+        returns_ws = returns_wb.active
+        returns_headers = header_map(returns_ws)
+        required_return_headers = {
+            "退货单号", "商品编码", "实退数量", "退货机构", "制单日期"
+        }
+        if not required_return_headers.issubset(returns_headers):
+            raise ValueError("退货订单明细缺少必要字段。")
+
+        rows = []
+        order_first_seen = {}
+        sku_first_seen = {}
+        source_date = None
+        for row_index in range(2, returns_ws.max_row + 1):
+            order_id = self._normalize_excel_id(
+                returns_ws.cell(row_index, returns_headers["退货单号"]).value
+            )
+            sku = self._normalize_excel_id(
+                returns_ws.cell(row_index, returns_headers["商品编码"]).value
+            )
+            institution = str(
+                returns_ws.cell(row_index, returns_headers["退货机构"]).value or ""
+            ).strip()
+            if not order_id or not sku or not institution:
+                continue
+            qty = quantity(
+                returns_ws.cell(row_index, returns_headers["实退数量"]).value
+            )
+            rows.append((order_id, sku, institution, qty))
+            order_first_seen.setdefault(order_id, len(order_first_seen))
+            sku_first_seen.setdefault(sku, len(sku_first_seen))
+            if source_date is None:
+                raw_date = returns_ws.cell(
+                    row_index, returns_headers["制单日期"]
+                ).value
+                if isinstance(raw_date, datetime):
+                    source_date = raw_date.replace(
+                        hour=0, minute=0, second=0, microsecond=0
+                    )
+                elif isinstance(raw_date, date):
+                    source_date = datetime.combine(raw_date, datetime.min.time())
+                else:
+                    match = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", str(raw_date))
+                    if match:
+                        source_date = datetime(*map(int, match.groups()))
+        returns_wb.close()
+        if not rows:
+            raise ValueError("退货订单明细中没有可生成的数据。")
+        if source_date is None:
+            raise ValueError("无法从退货订单明细识别制单日期。")
+
+        order_institution = {}
+        for order_id, _, institution, _ in rows:
+            existing = order_institution.setdefault(order_id, institution)
+            if existing != institution:
+                raise ValueError(f"退货单 {order_id} 对应了多个退货机构。")
+
+        city_priority = {
+            name: index for index, name in enumerate([
+                "北京", "北京逆向", "成都", "德州", "广州", "广州逆向",
+                "杭州", "上海", "沈阳", "武汉", "西安", "郑州"
+            ])
+        }
+        orders = sorted(
+            order_institution,
+            key=lambda order_id: (
+                city_priority.get(order_institution[order_id], 999),
+                order_first_seen[order_id],
+            ),
+        )
+        skus = sorted(sku_first_seen, key=sku_first_seen.get)
+
+        logistics_wb = openpyxl.load_workbook(
+            self.return_pickup_files["logistics"], data_only=True
+        )
+        logistics_ws = logistics_wb.active
+        logistics_headers = header_map(logistics_ws)
+        if not {"业务单号", "运单号"}.issubset(logistics_headers):
+            raise ValueError("物流预约数据缺少业务单号或运单号字段。")
+        tracking_map = {}
+        for row_index in range(2, logistics_ws.max_row + 1):
+            business_id = self._normalize_excel_id(
+                logistics_ws.cell(row_index, logistics_headers["业务单号"]).value
+            )
+            tracking_number = self._normalize_excel_id(
+                logistics_ws.cell(row_index, logistics_headers["运单号"]).value
+            )
+            if business_id:
+                tracking_map[business_id] = tracking_number
+        logistics_wb.close()
+
+        models_wb = openpyxl.load_workbook(
+            self.return_pickup_files["models"], data_only=True
+        )
+        models_ws = None
+        models_headers = None
+        for worksheet in models_wb.worksheets:
+            candidate_headers = header_map(worksheet)
+            if {"SKU", "编码"}.issubset(candidate_headers):
+                models_ws = worksheet
+                models_headers = candidate_headers
+                break
+        if models_ws is None:
+            models_wb.close()
+            raise ValueError("机型表中未找到 SKU 和编码字段。")
+        model_map = {}
+        for row_index in range(2, models_ws.max_row + 1):
+            sku = self._normalize_excel_id(
+                models_ws.cell(row_index, models_headers["SKU"]).value
+            )
+            model_code = models_ws.cell(row_index, models_headers["编码"]).value
+            if sku and model_code not in (None, ""):
+                model_map[sku] = str(model_code).strip()
+        models_wb.close()
+
+        missing_tracking = [order for order in orders if not tracking_map.get(order)]
+        missing_models = [sku for sku in skus if not model_map.get(sku)]
+        errors = []
+        if missing_tracking:
+            errors.append("物流预约数据缺少以下业务单号的运单号：\n" + "、".join(missing_tracking))
+        if missing_models:
+            errors.append("机型表缺少以下 SKU 的编码：\n" + "、".join(missing_models))
+        if errors:
+            raise ValueError("\n\n".join(errors))
+
+        pivot = defaultdict(Decimal)
+        for order_id, sku, _, qty in rows:
+            pivot[(sku, order_id)] += qty
+
+        output_wb = openpyxl.Workbook()
+        worksheet = output_wb.active
+        worksheet.title = "Sheet1"
+
+        duplicate_counts = defaultdict(int)
+        warehouse_headers = []
+        for order_id in orders:
+            institution = order_institution[order_id]
+            duplicate_counts[institution] += 1
+            suffix = duplicate_counts[institution]
+            warehouse_headers.append(
+                institution if suffix == 1 else f"{institution}{suffix}"
+            )
+        headers = ["日期", "商品编码", "编号", "合计"] + warehouse_headers
+        worksheet.append(headers)
+
+        for sku in skus:
+            quantities = [pivot[(sku, order_id)] for order_id in orders]
+            total = sum(quantities, Decimal("0"))
+            worksheet.append([
+                source_date,
+                excel_number_or_text(sku),
+                model_map[sku],
+                int(total) if total == total.to_integral() else float(total),
+                *[
+                    int(value) if value == value.to_integral() else float(value)
+                    for value in quantities
+                ],
+            ])
+
+        total_row = worksheet.max_row + 1
+        column_totals = [
+            sum((pivot[(sku, order_id)] for sku in skus), Decimal("0"))
+            for order_id in orders
+        ]
+        grand_total = sum(column_totals, Decimal("0"))
+        worksheet.append([
+            source_date, "合计", None,
+            int(grand_total) if grand_total == grand_total.to_integral() else float(grand_total),
+            *[
+                int(value) if value == value.to_integral() else float(value)
+                for value in column_totals
+            ],
+        ])
+
+        tracking_row = worksheet.max_row + 1
+        worksheet.append([
+            source_date, "寄回快递单号", None, None,
+            *[tracking_map[order] for order in orders],
+        ])
+        order_row = worksheet.max_row + 1
+        worksheet.append([
+            source_date, "采购单号", None, None,
+            *[excel_number_or_text(order) for order in orders],
+        ])
+        worksheet.merge_cells(start_row=total_row, start_column=2, end_row=total_row, end_column=3)
+        worksheet.merge_cells(start_row=tracking_row, start_column=2, end_row=tracking_row, end_column=3)
+        worksheet.merge_cells(start_row=order_row, start_column=2, end_row=order_row, end_column=3)
+
+        dark_fill = PatternFill("solid", fgColor="FFF8CBAD")
+        light_fill = PatternFill("solid", fgColor="FFFCE4D6")
+        white_fill = PatternFill("solid", fgColor="FFFFFFFF")
+        thin = Side(style="thin", color="FF000000")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        center = Alignment(horizontal="center", vertical="center")
+        center_wrap = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        for column in range(1, worksheet.max_column + 1):
+            cell = worksheet.cell(1, column)
+            cell.border = border
+            cell.alignment = center_wrap if column >= 5 else center
+            cell.fill = dark_fill if column <= 4 else light_fill
+            cell.font = Font(
+                name="微软雅黑", size=14 if column <= 4 else 12, bold=True,
+                color="FF000000"
+            )
+            cell.number_format = "0"
+
+        for row in range(2, total_row):
+            worksheet.row_dimensions[row].height = 21
+            for column in range(1, worksheet.max_column + 1):
+                cell = worksheet.cell(row, column)
+                cell.border = border
+                cell.alignment = Alignment(
+                    horizontal="left" if column == 3 else "center",
+                    vertical="center",
+                    wrap_text=True if column >= 5 else None,
+                )
+                if column == 1:
+                    cell.font = Font(name="微软雅黑", size=10, color="FF000000")
+                    cell.number_format = 'yyyy"年"m"月"d"日";@'
+                elif column in (2, 3):
+                    cell.font = Font(name="微软雅黑", size=10, color="FF000000")
+                    if column == 2:
+                        cell.number_format = '0_);[Red]\\(0\\)'
+                elif column == 4:
+                    cell.fill = dark_fill
+                    cell.font = Font(name="微软雅黑", size=14, bold=True, color="FF000000")
+                    cell.number_format = "0"
+                else:
+                    cell.fill = white_fill
+                    cell.font = Font(
+                        name="微软雅黑", size=12, bold=True,
+                        color="FFFF0000" if cell.value else "FF000000"
+                    )
+                    cell.number_format = "0"
+
+        for row in (total_row, tracking_row, order_row):
+            worksheet.row_dimensions[row].height = 24.75
+            for column in range(1, worksheet.max_column + 1):
+                cell = worksheet.cell(row, column)
+                cell.border = border
+                cell.alignment = center
+                if column == 1:
+                    cell.font = Font(name="微软雅黑", size=10, color="FF000000")
+                    cell.number_format = 'yyyy"年"m"月"d"日";@'
+                elif column in (2, 3):
+                    cell.fill = dark_fill
+                    cell.font = Font(name="微软雅黑", size=18, bold=True, color="FF000000")
+                    if column == 2:
+                        cell.number_format = "0"
+                elif column == 4:
+                    cell.fill = dark_fill
+                    cell.font = Font(name="微软雅黑", size=14 if row == total_row else 9,
+                                     bold=True, color="FF000000")
+                    cell.number_format = "0"
+                elif row == total_row:
+                    cell.fill = dark_fill
+                    cell.font = Font(name="微软雅黑", size=16, bold=True, color="FF000000")
+                    cell.number_format = "0"
+                elif row == tracking_row:
+                    cell.font = Font(name="微软雅黑", size=8, color="FF000000")
+                else:
+                    cell.fill = dark_fill
+                    cell.font = Font(name="微软雅黑", size=8, bold=True, color="FFFF0000")
+
+        worksheet.row_dimensions[1].height = 21
+        widths = {"A": 14.75, "B": 14.375, "C": 19.125, "D": 12.875}
+        for letter, width in widths.items():
+            worksheet.column_dimensions[letter].width = width
+        for column in range(5, worksheet.max_column + 1):
+            worksheet.column_dimensions[get_column_letter(column)].width = 13
+
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        output_wb.save(output_path)
+        return {
+            "sku_count": len(skus),
+            "order_count": len(orders),
+            "total_quantity": int(grand_total) if grand_total == grand_total.to_integral() else float(grand_total),
+        }
     
     def show_app_settings(self):
         """显示应用设置对话框"""
@@ -1611,60 +2458,60 @@ class SupplierLabelGeneratorWindow(QMainWindow):
         layout.setSpacing(16)
         layout.setContentsMargins(16, 16, 16, 16)
 
-        data_group = QFrame()
-        data_group.setObjectName("sectionCard")
-        data_card_layout = QVBoxLayout(data_group)
-        data_card_layout.setContentsMargins(16, 16, 16, 16)
+        data_card_layout = QVBoxLayout()
+        data_card_layout.setContentsMargins(0, 0, 0, 0)
         data_card_layout.setSpacing(12)
         data_title = QLabel("工作区")
         data_title.setObjectName("sectionTitle")
-        data_card_layout.addWidget(data_title, 0, Qt.AlignLeft)
+
+        self.file_name_label = ElidedLabel("尚未导入工作表文件")
+        self.file_name_label.setObjectName("mutedText")
+        self.file_name_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.file_name_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        title_layout = QHBoxLayout()
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(12)
+        title_layout.addWidget(data_title, 0, Qt.AlignLeft)
+        title_layout.addWidget(self.file_name_label, 1)
+        data_card_layout.addLayout(title_layout)
 
         data_layout = QGridLayout()
         data_layout.setContentsMargins(0, 0, 0, 0)
         data_layout.setHorizontalSpacing(8)
         data_layout.setVerticalSpacing(8)
 
-        self.file_name_label = ElidedLabel("尚未导入工作表文件")
-        self.file_name_label.setObjectName("mutedText")
-        data_layout.addWidget(self.file_name_label, 0, 0)
-
-        app_settings_btn = QPushButton("应用设置")
-        app_settings_btn.setProperty("role", "quiet")
-        app_settings_btn.clicked.connect(self.show_app_settings)
-        data_layout.addWidget(app_settings_btn, 0, 1)
-
         import_excel_btn = QPushButton("导入 Excel")
         import_excel_btn.clicked.connect(self.import_excel_file)
-        data_layout.addWidget(import_excel_btn, 1, 0)
+        data_layout.addWidget(import_excel_btn, 0, 0)
 
         self.open_excel_btn = QPushButton("打开工作表文件")
         self.open_excel_btn.setEnabled(False)
         self.open_excel_btn.clicked.connect(self.open_excel_file)
-        data_layout.addWidget(self.open_excel_btn, 1, 1)
+        data_layout.addWidget(self.open_excel_btn, 0, 1)
 
         add_label_btn = QPushButton("新增标签")
         add_label_btn.clicked.connect(self.show_label_dialog)
-        data_layout.addWidget(add_label_btn, 2, 0)
+        data_layout.addWidget(add_label_btn, 1, 0)
 
         add_box_btn = QPushButton("新增箱唛")
         add_box_btn.clicked.connect(self.show_box_dialog)
-        data_layout.addWidget(add_box_btn, 2, 1)
+        data_layout.addWidget(add_box_btn, 1, 1)
 
-        mapping_settings_btn = QPushButton("工作表设置")
+        mapping_settings_btn = QPushButton("应用设置")
         mapping_settings_btn.clicked.connect(self.show_sheet_mapping_dialog)
-        data_layout.addWidget(mapping_settings_btn, 3, 0)
+        data_layout.addWidget(mapping_settings_btn, 2, 0)
 
         export_btn = QPushButton("导出文件")
         export_btn.setProperty("role", "primary")
         export_btn.clicked.connect(self.export_label_box)
-        data_layout.addWidget(export_btn, 3, 1)
+        data_layout.addWidget(export_btn, 2, 1)
         data_layout.setColumnStretch(0, 1)
         data_layout.setColumnStretch(1, 1)
         data_card_layout.addLayout(data_layout)
-        layout.addWidget(data_group)
+        layout.addLayout(data_card_layout)
 
-        options_group = QFrame()
+        options_group = QFrame(widget)
         options_group.setObjectName("sectionCard")
         options_card_layout = QVBoxLayout(options_group)
         options_card_layout.setContentsMargins(16, 16, 16, 16)
@@ -1721,7 +2568,7 @@ class SupplierLabelGeneratorWindow(QMainWindow):
         options_layout.addWidget(recognize_settings_btn, 4, 1)
         options_layout.setColumnStretch(1, 1)
         options_card_layout.addLayout(options_layout)
-        layout.addWidget(options_group)
+        options_group.setVisible(False)
         layout.addStretch(1)
         return widget
     
@@ -1940,6 +2787,11 @@ class SupplierLabelGeneratorWindow(QMainWindow):
                 "label_14": gui_dir / "templates" / "label_14.pld",
                 "label_15": gui_dir / "templates" / "label_15.pld",
                 "label_16": gui_dir / "templates" / "label_16.pld",
+                "label_no_69_12": gui_dir / "templates" / "label_no_69_12.pld",
+                "label_no_69_13": gui_dir / "templates" / "label_no_69_13.pld",
+                "label_no_69_14": gui_dir / "templates" / "label_no_69_14.pld",
+                "label_no_69_15": gui_dir / "templates" / "label_no_69_15.pld",
+                "label_no_69_16": gui_dir / "templates" / "label_no_69_16.pld",
                 "label_propeller": gui_dir / "templates" / "label_propeller.pld",
             }
             
@@ -1978,15 +2830,21 @@ class SupplierLabelGeneratorWindow(QMainWindow):
                         continue
 
                     ws = self.current_excel_workbook[resolved]
+                    if ws.sheet_state != "visible":
+                        print(f"[DEBUG] 工作表已隐藏（跳过预扫描）: {resolved}")
+                        continue
                     for row in range(2, ws.max_row + 1):
                         sku = str(ws.cell(row, 1).value or "").strip()
-                        code69 = str(ws.cell(row, 3).value or "").strip()
+                        raw_code69 = ws.cell(row, 3).value
+                        code69 = "" if raw_code69 is None else str(raw_code69).strip()
                         
                         if not sku:
                             continue
                         
                         # 判断是否为螺旋桨：69码为空 且 商品编号是纯数字
-                        is_propeller = (not code69 or not code69.startswith("69")) and sku.isdigit()
+                        # 69码明确填写为 0 时使用无69码模板，不按螺旋桨处理。
+                        is_no_69 = code69 == "0"
+                        is_propeller = (not is_no_69) and (not code69 or not code69.startswith("69")) and sku.isdigit()
                         
                         if is_propeller and sku not in propeller_mapping and sku not in new_propeller_skus:
                             new_propeller_skus.append(sku)
@@ -2029,6 +2887,9 @@ class SupplierLabelGeneratorWindow(QMainWindow):
                     sheet_name = resolved
 
                     ws = self.current_excel_workbook[sheet_name]
+                    if ws.sheet_state != "visible":
+                        print(f"[DEBUG] 工作表已隐藏（跳过）: {sheet_name}")
+                        continue
                     print(f"[DEBUG] 处理工作表: {sheet_name}")
                     
                     if len(sheets) > 1:
@@ -2040,43 +2901,11 @@ class SupplierLabelGeneratorWindow(QMainWindow):
                         os.makedirs(sheet_folder)
                     
                     for row in range(2, ws.max_row + 1):
-                        # 检查是否需要跳过红色文字行
-                        rule_key = f"{brand}|{sheet_name}"
-                        should_skip_red = self.sheet_rules.get(label_type, {}).get(rule_key) == "skip_red_text"
-                        
-                        print(f"[DEBUG] 行{row}：rule_key={rule_key}, should_skip_red={should_skip_red}")
-                        
-                        if should_skip_red:
-                            # 检查该行是否为红色文字
-                            sku_cell = ws.cell(row, 1)
-                            is_red = False
-                            
-                            if sku_cell.font and sku_cell.font.color:
-                                color = sku_cell.font.color
-                                print(f"[DEBUG] 行{row}：color={color}, color.rgb={getattr(color, 'rgb', None)}, color.type={getattr(color, 'type', None)}")
-                                
-                                # 检查是否为红色
-                                if hasattr(color, 'rgb') and color.rgb:
-                                    color_str = str(color.rgb).upper()
-                                    print(f"[DEBUG] 行{row}：color_str={color_str}")
-                                    # 红色的 RGB 值：FF0000 或 FFFF0000
-                                    if 'FF0000' in color_str or color_str == 'FFFF0000':
-                                        is_red = True
-                                elif hasattr(color, 'index') and color.index:
-                                    # 检查是否使用了主题颜色或索引颜色
-                                    print(f"[DEBUG] 行{row}：color.index={color.index}")
-                                    # 红色通常是索引 10 或主题颜色
-                                    if color.index == 10 or color.index == 3:
-                                        is_red = True
-                            
-                            if is_red:
-                                print(f"[DEBUG] 行{row}：跳过红色文字行")
-                                continue
-                        
                         # 读取行数据
                         sku = str(ws.cell(row, 1).value or "").strip()  # A列：商品编号（SKU）
                         brand_cell = str(ws.cell(row, 2).value or "").strip()  # B列：品牌
-                        code69 = str(ws.cell(row, 3).value or "").strip()  # C列：69码
+                        raw_code69 = ws.cell(row, 3).value
+                        code69 = "" if raw_code69 is None else str(raw_code69).strip()  # C列：69码
                         sn_full = str(ws.cell(row, 4).value or "").strip()  # D列：SN码
                         template_filename = str(ws.cell(row, 5).value or "").strip()  # E列：编号
                         
@@ -2086,7 +2915,9 @@ class SupplierLabelGeneratorWindow(QMainWindow):
                         total_count += 1
                         
                         # 判断是否为螺旋桨：69码为空 且 商品编号是纯数字
-                        is_propeller = (not code69 or not code69.startswith("69")) and sku.isdigit()
+                        # 69码明确填写为 0 时使用无69码模板，不按螺旋桨处理。
+                        is_no_69 = code69 == "0"
+                        is_propeller = (not is_no_69) and (not code69 or not code69.startswith("69")) and sku.isdigit()
                         
                         try:
                             if is_propeller:
@@ -2177,6 +3008,9 @@ class SupplierLabelGeneratorWindow(QMainWindow):
                                     template_key = "label_13"  # 玩具用 label_13
                                 else:
                                     template_key = "label_12"  # 3C 用 label_12
+
+                                if is_no_69:
+                                    template_key = template_key.replace("label_", "label_no_69_", 1)
                                 
                                 template_path = default_templates[template_key]
                                 if not template_path.exists():
@@ -2999,48 +3833,6 @@ class SupplierLabelGeneratorWindow(QMainWindow):
             print(f"[DEBUG] 保存映射失败: {str(e)}")
             return False
     
-    def load_sheet_rules(self):
-        """从配置文件加载规则关系"""
-        try:
-            saved_rules = self.config_manager.get('sheet_rules')
-            if saved_rules:
-                return saved_rules
-        except Exception as e:
-            print(f"[DEBUG] 加载规则失败: {str(e)}")
-        
-        # 返回默认规则
-        return self.init_sheet_rules()
-    
-    def init_sheet_rules(self):
-        """初始化默认规则关系"""
-        rules = {}
-        
-        # 遍历映射关系，为包含"拆2"的工作表设置默认规则
-        for label_type, brands in self.sheet_mapping.items():
-            if label_type == "螺旋桨":
-                continue
-            
-            rules[label_type] = {}
-            for brand, sheets in brands.items():
-                if isinstance(sheets, list):
-                    for sheet in sheets:
-                        # 如果工作表名称包含"拆2"，设置默认规则为"跳过红色文字行"
-                        if "拆2" in sheet:
-                            rule_key = f"{brand}|{sheet}"
-                            rules[label_type][rule_key] = "skip_red_text"
-        
-        return rules
-    
-    def save_sheet_rules(self):
-        """保存规则关系到配置文件"""
-        try:
-            self.config_manager.set('sheet_rules', self.sheet_rules)
-            self.config_manager.save_config()
-            return True
-        except Exception as e:
-            print(f"[DEBUG] 保存规则失败: {str(e)}")
-            return False
-    
     def init_sheet_mapping(self):
         """初始化品牌-工作表映射关系"""
         return {
@@ -3058,13 +3850,11 @@ class SupplierLabelGeneratorWindow(QMainWindow):
         }
     
     def show_sheet_mapping_dialog(self):
-        """显示工作表映射设置对话框"""
+        """显示生成选项与工作表映射的统一对话框。"""
         dialog = SheetMappingDialog(self, self.sheet_mapping)
         if dialog.exec_() == QDialog.Accepted:
             self.sheet_mapping = dialog.get_mapping()
-            self.sheet_rules = dialog.get_rules()
             self.save_sheet_mapping()
-            self.save_sheet_rules()
     
     
     def check_sheet_mapping(self, label_type, workbook):
@@ -3751,7 +4541,7 @@ class LabelDialog(QDialog):
         self.parent_gui = parent
         self.excel_data = None  # 存储导入的Excel数据
         self.setWindowTitle("新增标签")
-        self.resize(600, 360)
+        self.resize(400, 480)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.center_on_screen()
         self.init_ui()
@@ -3780,6 +4570,7 @@ class LabelDialog(QDialog):
         form_layout = QGridLayout()
         form_layout.setSpacing(8)
         form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setColumnStretch(1, 1)
         
         # 筛选类型
         form_layout.addWidget(QLabel("类型:"), 0, 0)
@@ -3812,72 +4603,58 @@ class LabelDialog(QDialog):
         self.label_code69_input.setPlaceholderText("例如: 6978030410332")
         form_layout.addWidget(self.label_code69_input, 4, 1)
         
-        # SN序列号
-        self.label_sn_label = QLabel("SN序列号:")
+        # SN序列号拆分为四行，窄窗口下也能完整显示
+        self.label_sn_label = QLabel("SN类型:")
         form_layout.addWidget(self.label_sn_label, 5, 0)
-        
-        sn_layout = QHBoxLayout()
-        sn_layout.setContentsMargins(0, 0, 0, 0)
-        sn_layout.setSpacing(0)  # 改为 0，然后手动添加间距
-        
-        sn_layout.addWidget(QLabel("类型:"))
         self.label_sn_prefix = ModernComboBox()
-        self.label_sn_prefix.setProperty("compact", True)
         self.label_sn_prefix.addItems(["SG", "NB"])
-        self.label_sn_prefix.setFixedWidth(90)
-        sn_layout.addWidget(self.label_sn_prefix)
-        sn_layout.addSpacing(10)
-        
-        sn_layout.addWidget(QLabel("序号:"))
+        form_layout.addWidget(self.label_sn_prefix, 5, 1)
+
+        self.label_sn_seq_label = QLabel("SN序号:")
+        form_layout.addWidget(self.label_sn_seq_label, 6, 0)
         self.label_sn_seq = QLineEdit()
         self.label_sn_seq.setPlaceholderText("1-999")
-        self.label_sn_seq.setMaximumWidth(50)
         self.label_sn_seq.setMaxLength(3)
-        sn_layout.addWidget(self.label_sn_seq)
-        sn_layout.addSpacing(10)
-        
-        sn_layout.addWidget(QLabel("年份:"))
+        form_layout.addWidget(self.label_sn_seq, 6, 1)
+
+        self.label_sn_year_label = QLabel("SN年份:")
+        form_layout.addWidget(self.label_sn_year_label, 7, 0)
         self.label_sn_year = QLineEdit()
         self.label_sn_year.setPlaceholderText("YYYY")
-        self.label_sn_year.setFixedWidth(60)
         self.label_sn_year.setMaxLength(4)
         from datetime import datetime
         current_year = datetime.now().year
         self.label_sn_year.setText(str(current_year))
-        sn_layout.addWidget(self.label_sn_year)
-        sn_layout.addSpacing(10)
-        
-        sn_layout.addWidget(QLabel("日期:"))
+        form_layout.addWidget(self.label_sn_year, 7, 1)
+
+        self.label_sn_date_label = QLabel("SN日期:")
+        form_layout.addWidget(self.label_sn_date_label, 8, 0)
         self.label_sn_date = QLineEdit()
         self.label_sn_date.setPlaceholderText("MMDD")
-        self.label_sn_date.setFixedWidth(60)
         self.label_sn_date.setMaxLength(4)
         self.label_sn_date.setText(datetime.now().strftime("%m%d"))
-        sn_layout.addWidget(self.label_sn_date)
-        
-        form_layout.addLayout(sn_layout, 5, 1)
+        form_layout.addWidget(self.label_sn_date, 8, 1)
         
         # 批次行（与其他行左对齐）
-        form_layout.addWidget(QLabel("批次:"), 6, 0)
+        form_layout.addWidget(QLabel("批次:"), 9, 0)
         
         batch_layout = QHBoxLayout()
         batch_layout.setContentsMargins(0, 0, 0, 0)
-        batch_layout.setSpacing(0)
+        batch_layout.setSpacing(8)
         
         self.label_sn_batch = QLineEdit()
         self.label_sn_batch.setPlaceholderText("001-999")
-        self.label_sn_batch.setMaximumWidth(50)
         self.label_sn_batch.setMaxLength(3)
         self.label_sn_batch.setText("001")
-        batch_layout.addWidget(self.label_sn_batch)
-        
-        batch_layout.addStretch()
+        batch_layout.addWidget(self.label_sn_batch, 1)
         
         export_btn = QPushButton("导出")
+        export_btn.setProperty("role", "primary")
+        export_btn.setFixedWidth(88)
         export_btn.clicked.connect(self.export_labels)
         batch_layout.addWidget(export_btn)
         
-        form_layout.addLayout(batch_layout, 6, 1)
+        form_layout.addLayout(batch_layout, 9, 1)
         
         layout.addLayout(form_layout)
         
@@ -3901,6 +4678,9 @@ class LabelDialog(QDialog):
         self.label_code69_label.setEnabled(False)
         self.label_code69_input.setEnabled(False)
         self.label_sn_label.setEnabled(False)
+        self.label_sn_seq_label.setEnabled(False)
+        self.label_sn_year_label.setEnabled(False)
+        self.label_sn_date_label.setEnabled(False)
         self.label_sn_prefix.setEnabled(False)
         self.label_sn_seq.setEnabled(False)
         self.label_sn_year.setEnabled(False)
@@ -3914,6 +4694,10 @@ class LabelDialog(QDialog):
         self.label_product_input.setEnabled(True)
         self.label_sku_input.setEnabled(True)
         self.label_code69_input.setEnabled(True)
+        self.label_sn_label.setEnabled(True)
+        self.label_sn_seq_label.setEnabled(True)
+        self.label_sn_year_label.setEnabled(True)
+        self.label_sn_date_label.setEnabled(True)
         self.label_sn_prefix.setEnabled(True)
         self.label_sn_seq.setEnabled(True)
         self.label_sn_year.setEnabled(True)
@@ -4523,6 +5307,9 @@ class LabelDialog(QDialog):
             self.label_code69_label.setEnabled(True)
             self.label_code69_input.setEnabled(True)
             self.label_sn_label.setEnabled(True)
+            self.label_sn_seq_label.setEnabled(True)
+            self.label_sn_year_label.setEnabled(True)
+            self.label_sn_date_label.setEnabled(True)
             self.label_sn_prefix.setEnabled(True)
             self.label_sn_seq.setEnabled(True)
             self.label_sn_year.setEnabled(True)
@@ -4533,6 +5320,9 @@ class LabelDialog(QDialog):
             self.label_code69_label.setEnabled(True)
             self.label_code69_input.setEnabled(True)
             self.label_sn_label.setEnabled(True)
+            self.label_sn_seq_label.setEnabled(True)
+            self.label_sn_year_label.setEnabled(True)
+            self.label_sn_date_label.setEnabled(True)
             self.label_sn_prefix.setEnabled(True)
             self.label_sn_seq.setEnabled(True)
             self.label_sn_year.setEnabled(True)
@@ -4543,6 +5333,9 @@ class LabelDialog(QDialog):
             self.label_code69_input.setEnabled(False)
             self.label_code69_input.clear()
             self.label_sn_label.setEnabled(False)
+            self.label_sn_seq_label.setEnabled(False)
+            self.label_sn_year_label.setEnabled(False)
+            self.label_sn_date_label.setEnabled(True)
             self.label_sn_prefix.setEnabled(False)
             self.label_sn_seq.setEnabled(False)
             self.label_sn_year.setEnabled(False)
@@ -4667,18 +5460,17 @@ class BoxDialog(QDialog):
         box_form_layout.addWidget(self.box_seq_label, 6, 0)
         batch_button_layout = QHBoxLayout()
         batch_button_layout.setContentsMargins(0, 0, 0, 0)
-        batch_button_layout.setSpacing(10)
+        batch_button_layout.setSpacing(8)
         
         self.box_seq_input = QLineEdit()
         self.box_seq_input.setPlaceholderText("默认1")
         self.box_seq_input.setText("1")
-        self.box_seq_input.setMaximumWidth(60)
         self.box_seq_input.setMaxLength(3)
-        batch_button_layout.addWidget(self.box_seq_input)
-        
-        batch_button_layout.addStretch()
+        batch_button_layout.addWidget(self.box_seq_input, 1)
         
         export_btn = QPushButton("导出")
+        export_btn.setProperty("role", "primary")
+        export_btn.setFixedWidth(88)
         export_btn.clicked.connect(self.export_box)
         batch_button_layout.addWidget(export_btn)
         
@@ -4763,7 +5555,7 @@ class BoxDialog(QDialog):
             self.box_seq_input.setPlaceholderText("默认1")
             self.box_seq_input.setText("1")
             self.box_seq_input.setMaxLength(3)
-            self.box_seq_input.setMaximumWidth(60)
+            self.box_seq_input.setMaximumWidth(16777215)
 
         if self.layout():
             self._resize_to_content()
@@ -4984,9 +5776,9 @@ class BoxDialog(QDialog):
 
 
 class SheetMappingDialog(QDialog):
-    """工作表映射设置对话框"""
+    """生成选项与工作表映射设置对话框。"""
 
-    VISIBLE_MAPPING_ROWS = 8
+    VISIBLE_MAPPING_ROWS = 5
     MAPPING_ROW_HEIGHT = 38
     
     def __init__(self, parent=None, mapping=None):
@@ -4998,17 +5790,21 @@ class SheetMappingDialog(QDialog):
         # 如果mapping为空，使用默认值
         if not self.mapping and parent:
             self.mapping = parent.init_sheet_mapping()
-        
-        # 加载已保存的规则
-        self.rules = {}
-        if parent and hasattr(parent, 'sheet_rules'):
-            self.rules = copy.deepcopy(parent.sheet_rules)
+
+        self.recognize_config = self.parent_gui.config_manager.get(
+            'recognize_config',
+            {'sheet_name': '勿改动！机型', 'row': 2, 'column': 10}
+        )
+        self.box_recognize_config = self.parent_gui.config_manager.get(
+            'box_recognize_config',
+            {'sheet_name': '箱唛'}
+        )
         
         # 全局锁定状态，每次打开都是锁定状态
         self.is_locked = True
         
-        self.setWindowTitle("工作表映射设置")
-        self.resize(560, 460)
+        self.setWindowTitle("应用设置")
+        self.resize(400, 650)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.center_on_screen()
         self.init_ui()
@@ -5031,12 +5827,166 @@ class SheetMappingDialog(QDialog):
     def init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout()
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setContentsMargins(16, 8, 16, 16)
         layout.setSpacing(8)
+
+        self.options_tabs = QTabWidget()
+        self.options_tabs.setObjectName("generationOptionsTabs")
+        self.options_tabs.setDocumentMode(True)
+        options_tab_bar = SlidingUnderlineTabBar()
+        options_tab_bar.setObjectName("generationOptionsTabBar")
+        self.options_tabs.setTabBar(options_tab_bar)
+
+        generation_page = QWidget()
+        generation_page_layout = QVBoxLayout(generation_page)
+        generation_page_layout.setContentsMargins(0, 8, 0, 0)
+        generation_page_layout.setSpacing(8)
+
+        mapping_page = QWidget()
+        mapping_page_layout = QVBoxLayout(mapping_page)
+        mapping_page_layout.setContentsMargins(0, 8, 0, 0)
+        mapping_page_layout.setSpacing(8)
+
+        version_page = QWidget()
+        version_page_layout = QVBoxLayout(version_page)
+        version_page_layout.setContentsMargins(0, 8, 0, 0)
+        version_page_layout.setSpacing(8)
+
+        version_layout = QGridLayout()
+        version_layout.setHorizontalSpacing(8)
+        version_layout.setVerticalSpacing(8)
+        version_layout.addWidget(QLabel("当前版本:"), 0, 0)
+        version_layout.addWidget(QLabel(self.parent_gui.app_version), 0, 1)
+        version_layout.addWidget(QLabel("软件更新:"), 1, 0)
+        check_update_btn = QPushButton("检测更新")
+        check_update_btn.clicked.connect(self.check_for_updates)
+        version_layout.addWidget(check_update_btn, 1, 1)
+        maker_label = QLabel("Made by xgb819")
+        maker_label.setObjectName("mutedText")
+        maker_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        version_layout.addWidget(maker_label, 2, 0, 1, 2)
+        version_layout.setColumnStretch(1, 1)
+        version_page_layout.addLayout(version_layout)
+        version_page_layout.addStretch(1)
+
+        generation_layout = QGridLayout()
+        generation_layout.setHorizontalSpacing(8)
+        generation_layout.setVerticalSpacing(8)
+
+        generation_layout.addWidget(QLabel("类型:"), 0, 0)
+        self.generation_type_combo = ModernComboBox()
+        self.generation_type_combo.addItems(["3C", "玩具"])
+        self.generation_type_combo.setCurrentText(
+            self.parent_gui.preview_type_combo.currentText()
+        )
+        generation_layout.addWidget(self.generation_type_combo, 0, 1)
+
+        generation_layout.addWidget(QLabel("年份:"), 1, 0)
+        self.generation_year_input = QLineEdit(
+            self.parent_gui.export_year_input.text()
+        )
+        self.generation_year_input.setPlaceholderText("YYYY")
+        generation_layout.addWidget(self.generation_year_input, 1, 1)
+
+        generation_layout.addWidget(QLabel("日期:"), 2, 0)
+        self.generation_date_input = QLineEdit(
+            self.parent_gui.export_date_input.text()
+        )
+        self.generation_date_input.setPlaceholderText("MMDD")
+        generation_layout.addWidget(self.generation_date_input, 2, 1)
+
+        generation_output_layout = QHBoxLayout()
+        generation_output_layout.setSpacing(18)
+        generation_output_layout.setAlignment(Qt.AlignVCenter)
+        self.generation_label_checkbox = QCheckBox("标签")
+        self.generation_box_checkbox = QCheckBox("箱唛")
+        self.generation_order_checkbox = QCheckBox("预定表")
+        self.generation_label_checkbox.setChecked(
+            self.parent_gui.output_label_checkbox.isChecked()
+        )
+        self.generation_box_checkbox.setChecked(
+            self.parent_gui.output_box_checkbox.isChecked()
+        )
+        self.generation_order_checkbox.setChecked(
+            self.parent_gui.output_order_checkbox.isChecked()
+        )
+        self.generation_order_checkbox.stateChanged.connect(
+            self._on_generation_order_changed
+        )
+        generation_output_layout.addWidget(self.generation_label_checkbox)
+        generation_output_layout.addWidget(self.generation_box_checkbox)
+        generation_output_layout.addWidget(self.generation_order_checkbox)
+        generation_output_layout.addStretch()
+
+        generation_layout.addWidget(QLabel("标签识别工作表:"), 4, 0)
+        self.recognize_sheet_combo = ModernComboBox()
+        sheet_names = (
+            self.parent_gui.current_excel_workbook.sheetnames
+            if self.parent_gui.current_excel_workbook else []
+        )
+        self.recognize_sheet_combo.addItems(sheet_names)
+        if self.recognize_config.get('sheet_name') in sheet_names:
+            self.recognize_sheet_combo.setCurrentText(
+                self.recognize_config.get('sheet_name')
+            )
+        generation_layout.addWidget(self.recognize_sheet_combo, 4, 1)
+
+        generation_layout.addWidget(QLabel("标签识别单元格:"), 5, 0)
+        self.recognize_cell_input = QLineEdit()
+        column_number = int(self.recognize_config.get('column', 10))
+        column_letters = ""
+        while column_number:
+            column_number, remainder = divmod(column_number - 1, 26)
+            column_letters = chr(65 + remainder) + column_letters
+        self.recognize_cell_input.setText(
+            f"{column_letters or 'J'}{self.recognize_config.get('row', 2)}"
+        )
+        self.recognize_cell_input.setPlaceholderText("如 J2")
+        generation_layout.addWidget(self.recognize_cell_input, 5, 1)
+
+        generation_layout.addWidget(QLabel("箱唛识别工作表:"), 6, 0)
+        self.box_recognize_sheet_combo = ModernComboBox()
+        self.box_recognize_sheet_combo.addItems(sheet_names)
+        box_sheet_name = self.box_recognize_config.get('sheet_name', '箱唛')
+        for sheet_name in sheet_names:
+            if sheet_name.strip() == '箱唛':
+                box_sheet_name = sheet_name
+                break
+        if box_sheet_name in sheet_names:
+            self.box_recognize_sheet_combo.setCurrentText(box_sheet_name)
+        generation_layout.addWidget(self.box_recognize_sheet_combo, 6, 1)
+
+        generation_content_label = QLabel("生成内容:")
+        generation_content_label.setAlignment(Qt.AlignVCenter)
+        generation_layout.addWidget(generation_content_label, 7, 0)
+        generation_layout.addLayout(generation_output_layout, 7, 1)
+        generation_layout.setRowMinimumHeight(
+            7, self.generation_type_combo.sizeHint().height()
+        )
+
+        generation_layout.addWidget(QLabel("导出路径:"), 8, 0)
+        export_path_layout = QHBoxLayout()
+        export_path_layout.setContentsMargins(0, 0, 0, 0)
+        export_path_layout.setSpacing(8)
+        self.export_path_input = QLineEdit(self.parent_gui.export_path)
+        self.export_path_input.setReadOnly(True)
+        export_path_layout.addWidget(self.export_path_input, 1)
+        browse_export_path_btn = QPushButton("浏览")
+        browse_export_path_btn.clicked.connect(self.browse_export_path)
+        export_path_layout.addWidget(browse_export_path_btn)
+        generation_layout.addLayout(export_path_layout, 8, 1)
+
+        version_row_height = self.generation_type_combo.sizeHint().height()
+        for row in range(3):
+            version_layout.setRowMinimumHeight(row, version_row_height)
+
+        generation_layout.setColumnStretch(1, 1)
+        generation_page_layout.addLayout(generation_layout)
+        generation_page_layout.addStretch(1)
         
         # 类型选择和锁定按钮
         type_layout = QHBoxLayout()
-        type_layout.addWidget(QLabel("类型:"))
+        type_layout.addWidget(QLabel("工作表类型:"))
         self.type_combo = ModernComboBox()
         self.type_combo.addItems(["3C", "玩具", "螺旋桨"])
         self.type_combo.currentTextChanged.connect(self.on_type_changed)
@@ -5049,18 +5999,16 @@ class SheetMappingDialog(QDialog):
         self.lock_btn.clicked.connect(self.toggle_lock)
         type_layout.addWidget(self.lock_btn)
         
-        layout.addLayout(type_layout, 0)
+        mapping_page_layout.addLayout(type_layout, 0)
         
         # 品牌和工作表映射表
         self.mapping_table = QTableWidget()
         self.mapping_table.setObjectName("mappingTable")
-        self.mapping_table.setColumnCount(3)
-        self.mapping_table.setHorizontalHeaderLabels(["品牌/商品编号", "工作表/模板文件名", "规则"])
+        self.mapping_table.setColumnCount(2)
+        self.mapping_table.setHorizontalHeaderLabels(["品牌/商品编号", "工作表/模板文件名"])
         self.mapping_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
-        self.mapping_table.setColumnWidth(0, 100)
+        self.mapping_table.setColumnWidth(0, 120)
         self.mapping_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.mapping_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
-        self.mapping_table.setColumnWidth(2, 180)
         # 隐藏行号（序号列）
         self.mapping_table.verticalHeader().setVisible(False)
         # 禁止编辑
@@ -5069,7 +6017,7 @@ class SheetMappingDialog(QDialog):
         self.mapping_table.setSelectionBehavior(QTableWidget.SelectItems)
         self.mapping_table.itemClicked.connect(self.on_table_item_clicked)
         self.mapping_table.itemDoubleClicked.connect(self.on_table_item_double_clicked)
-        layout.addWidget(self.mapping_table, 1)
+        mapping_page_layout.addWidget(self.mapping_table, 1)
         
         # 按钮行
         button_layout = QHBoxLayout()
@@ -5092,7 +6040,12 @@ class SheetMappingDialog(QDialog):
         self.ok_btn.clicked.connect(self.save_and_close)
         button_layout.addWidget(self.ok_btn)
         
-        layout.addLayout(button_layout, 0)
+        mapping_page_layout.addLayout(button_layout, 0)
+
+        self.options_tabs.addTab(generation_page, "生成选项")
+        self.options_tabs.addTab(mapping_page, "工作表设置")
+        self.options_tabs.addTab(version_page, "版本信息")
+        layout.addWidget(self.options_tabs)
         
         self.setLayout(layout)
         
@@ -5114,25 +6067,11 @@ class SheetMappingDialog(QDialog):
             header_height + visible_rows_height + frame_height
         )
 
-    def _set_rule_cell_widget(self, row, rule_combo):
-        """在规则单元格内为下拉框保留一致的上下间距。"""
-        container = QWidget()
-        container.setObjectName("ruleCell")
-        cell_layout = QVBoxLayout(container)
-        cell_layout.setContentsMargins(2, 4, 2, 4)
-        cell_layout.setSpacing(0)
-        cell_layout.addWidget(rule_combo)
-        self.mapping_table.setRowHeight(row, self.MAPPING_ROW_HEIGHT)
-        self.mapping_table.setCellWidget(row, 2, container)
-
-    def _rule_combo_at(self, row):
-        """返回规则单元格中的下拉框。"""
-        cell_widget = self.mapping_table.cellWidget(row, 2)
-        if isinstance(cell_widget, QComboBox):
-            return cell_widget
-        if cell_widget:
-            return cell_widget.findChild(QComboBox)
-        return None
+    def _on_generation_order_changed(self):
+        """预定表与标签、箱唛保持互斥。"""
+        if self.generation_order_checkbox.isChecked():
+            self.generation_label_checkbox.setChecked(False)
+            self.generation_box_checkbox.setChecked(False)
 
     def on_type_changed(self, type_name):
         """类型改变时更新表格"""
@@ -5168,11 +6107,7 @@ class SheetMappingDialog(QDialog):
                     
                     self.mapping_table.setItem(row, 1, value_item)
                     
-                    # 规则列下拉框（螺旋桨暂无规则，设置为禁用）
-                    rule_combo = ModernComboBox()
-                    rule_combo.addItem("无规则")
-                    rule_combo.setEnabled(False)  # 禁用下拉框，显示为灰色
-                    self._set_rule_cell_widget(row, rule_combo)
+                    self.mapping_table.setRowHeight(row, self.MAPPING_ROW_HEIGHT)
                     
                     row += 1
                 else:
@@ -5192,20 +6127,7 @@ class SheetMappingDialog(QDialog):
                             sheet_item.setFlags(sheet_item.flags() & ~Qt.ItemIsEditable)
                             self.mapping_table.setItem(row, 1, sheet_item)
                             
-                            # 规则列下拉框
-                            rule_combo = ModernComboBox()
-                            rule_combo.addItem("无规则")
-                            rule_combo.addItem("跳过红色文字行")
-                            
-                            # 从已保存的规则中获取
-                            rule_key = f"{key}|{sheet}"
-                            if type_name in self.rules and rule_key in self.rules[type_name]:
-                                rule_code = self.rules[type_name][rule_key]
-                                # 将规则代码转换为中文名称
-                                if rule_code == "skip_red_text":
-                                    rule_combo.setCurrentText("跳过红色文字行")
-                            
-                            self._set_rule_cell_widget(row, rule_combo)
+                            self.mapping_table.setRowHeight(row, self.MAPPING_ROW_HEIGHT)
                             
                             row += 1
                     else:
@@ -5218,20 +6140,7 @@ class SheetMappingDialog(QDialog):
                         sheet_item.setFlags(sheet_item.flags() & ~Qt.ItemIsEditable)
                         self.mapping_table.setItem(row, 1, sheet_item)
                         
-                        # 规则列下拉框
-                        rule_combo = ModernComboBox()
-                        rule_combo.addItem("无规则")
-                        rule_combo.addItem("跳过红色文字行")
-                        
-                        # 从已保存的规则中获取
-                        rule_key = f"{key}|{sheets}"
-                        if type_name in self.rules and rule_key in self.rules[type_name]:
-                            rule_code = self.rules[type_name][rule_key]
-                            # 将规则代码转换为中文名称
-                            if rule_code == "skip_red_text":
-                                rule_combo.setCurrentText("跳过红色文字行")
-                        
-                        self._set_rule_cell_widget(row, rule_combo)
+                        self.mapping_table.setRowHeight(row, self.MAPPING_ROW_HEIGHT)
                         
                         row += 1
         except Exception as e:
@@ -5485,56 +6394,81 @@ class SheetMappingDialog(QDialog):
                     if widget:
                         widget.setEnabled(True)
     
+    def browse_export_path(self):
+        """选择统一的文件导出目录。"""
+        folder_path = QFileDialog.getExistingDirectory(
+            self, "选择导出路径", self.export_path_input.text()
+        )
+        if folder_path:
+            self.export_path_input.setText(folder_path.replace('/', '\\'))
+
+    def check_for_updates(self):
+        """复用原有的更新检查逻辑。"""
+        checker = AppSettingsDialog(
+            self,
+            self.parent_gui.app_version,
+            self.export_path_input.text(),
+            self.parent_gui.config_manager
+        )
+        checker.check_for_updates()
+
     def save_and_close(self):
         """保存并关闭"""
-        # 从表格中提取规则信息
-        self.extract_rules_from_table()
+        import re
+        cell_text = self.recognize_cell_input.text().strip().upper()
+        match = re.fullmatch(r'([A-Z]+)(\d+)', cell_text)
+        if not match:
+            QMessageBox.warning(self, "错误", "单元格格式不正确，请使用如 J2 的格式")
+            self.options_tabs.setCurrentIndex(0)
+            self.recognize_cell_input.setFocus()
+            return
+
+        column_number = 0
+        for char in match.group(1):
+            column_number = column_number * 26 + ord(char) - ord('A') + 1
+        recognize_sheet_name = (
+            self.recognize_sheet_combo.currentText()
+            or self.recognize_config.get('sheet_name', '勿改动！机型')
+        )
+        box_sheet_name = (
+            self.box_recognize_sheet_combo.currentText()
+            or self.box_recognize_config.get('sheet_name', '箱唛')
+        )
+        self.parent_gui.config_manager.set('recognize_config', {
+            'sheet_name': recognize_sheet_name,
+            'row': int(match.group(2)),
+            'column': column_number
+        })
+        self.parent_gui.config_manager.set('box_recognize_config', {
+            'sheet_name': box_sheet_name
+        })
+
+        self.parent_gui.preview_type_combo.setCurrentText(
+            self.generation_type_combo.currentText()
+        )
+        self.parent_gui.export_year_input.setText(
+            self.generation_year_input.text().strip()
+        )
+        self.parent_gui.export_date_input.setText(
+            self.generation_date_input.text().strip()
+        )
+        self.parent_gui.output_label_checkbox.setChecked(
+            self.generation_label_checkbox.isChecked()
+        )
+        self.parent_gui.output_box_checkbox.setChecked(
+            self.generation_box_checkbox.isChecked()
+        )
+        self.parent_gui.output_order_checkbox.setChecked(
+            self.generation_order_checkbox.isChecked()
+        )
+        new_export_path = self.export_path_input.text().strip()
+        if new_export_path and new_export_path != self.parent_gui.export_path:
+            self.parent_gui.export_path = new_export_path
+            self.parent_gui.config_manager.set('export_path', new_export_path)
+            self.parent_gui.config_manager.save_config()
         self.accept()
     
-    def extract_rules_from_table(self):
-        """从表格中提取规则信息"""
-        # 创建规则存储结构
-        if not hasattr(self, 'rules'):
-            self.rules = {}
-        
-        type_name = self.type_combo.currentText()
-        if type_name not in self.rules:
-            self.rules[type_name] = {}
-        
-        # 遍历表格中的所有行
-        for row in range(self.mapping_table.rowCount()):
-            col0_item = self.mapping_table.item(row, 0)
-            col1_item = self.mapping_table.item(row, 1)
-            
-            if not col0_item or not col1_item:
-                continue
-            
-            brand = col0_item.text()
-            sheet = col1_item.text()
-            
-            # 从下拉框中获取规则
-            rule_combo = self._rule_combo_at(row)
-            if rule_combo and isinstance(rule_combo, QComboBox):
-                rule_display = rule_combo.currentText()
-                
-                # 将中文名称转换回规则代码
-                rule_code = ""
-                if rule_display == "跳过红色文字行":
-                    rule_code = "skip_red_text"
-                
-                # 创建规则键（品牌-工作表）
-                rule_key = f"{brand}|{sheet}"
-                self.rules[type_name][rule_key] = rule_code
-    
     def get_mapping(self):
-        """获取映射关系"""
-        return self.mapping
-    
-    def get_rules(self):
-        """获取规则关系"""
-        if not hasattr(self, 'rules'):
-            self.rules = {}
-        return self.rules
         """获取映射关系"""
         return self.mapping
 
