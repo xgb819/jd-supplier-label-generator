@@ -6,13 +6,14 @@ JD Supplier Label Generator - GUI 应用
 import sys
 import os
 import pathlib
+import re
 import warnings
 from typing import Dict
 
 
 APP_NAME = "京东供应商标签生成器"
 APP_SLUG = "jd-supplier-label-generator"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 GITHUB_REPOSITORY = "xgb819/jd-supplier-label-generator"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPOSITORY}/releases"
 GITHUB_LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest"
@@ -980,6 +981,41 @@ def resolve_sheet_name(workbook, desired_name: str):
             return name
 
     return None
+
+
+PLAIN_LABEL_TEMPLATE_NAME = "label_plain.pld"
+
+
+def get_label_sheet_columns(worksheet):
+    """按首行表头定位标签数据列，兼容省略 69码、SN 的表格。"""
+    aliases = {
+        "sku": {"商品编号", "sku"},
+        "brand": {"品牌", "玩具店铺", "店铺"},
+        "code69": {"69码", "69码编号"},
+        "sn": {"sn", "sn码", "sn序列号"},
+        "number": {"编号", "编码"},
+    }
+    result = {}
+    for column in range(1, worksheet.max_column + 1):
+        value = worksheet.cell(1, column).value
+        header = "".join(str(value or "").split()).lower()
+        for key, names in aliases.items():
+            if key not in result and header in names:
+                result[key] = column
+                break
+    return result
+
+
+def unique_label_output_path(folder, filename, extension=".pld"):
+    """返回不覆盖已有文件的路径；重名时依次追加 _2、_3。"""
+    safe_name = re.sub(r'[<>:"/\\|?*]', "_", str(filename or "").strip())
+    safe_name = safe_name.rstrip(". ") or "未命名"
+    candidate = os.path.join(folder, f"{safe_name}{extension}")
+    suffix = 2
+    while os.path.exists(candidate):
+        candidate = os.path.join(folder, f"{safe_name}_{suffix}{extension}")
+        suffix += 1
+    return candidate
 
 
 class UpdateCheckThread(QThread):
@@ -2775,10 +2811,6 @@ class SupplierLabelGeneratorWindow(QMainWindow):
             import re
             from main.label.label_generator import LabelGenerator
             
-            # 保存原始的螺旋桨映射，用于后续比较
-            original_propeller_mapping = dict(self.sheet_mapping.get("螺旋桨", {}))
-            new_propeller_mappings = {}  # 追踪新添加的映射
-            
             # 获取 default 模板路径
             gui_dir = _app_base_dir()
             default_templates = {
@@ -2792,7 +2824,7 @@ class SupplierLabelGeneratorWindow(QMainWindow):
                 "label_no_69_14": gui_dir / "templates" / "label_no_69_14.pld",
                 "label_no_69_15": gui_dir / "templates" / "label_no_69_15.pld",
                 "label_no_69_16": gui_dir / "templates" / "label_no_69_16.pld",
-                "label_propeller": gui_dir / "templates" / "label_propeller.pld",
+                "label_plain": gui_dir / "templates" / PLAIN_LABEL_TEMPLATE_NAME,
             }
             
             print(f"[DEBUG] sheet_mapping keys: {list(self.sheet_mapping.keys())}")
@@ -2810,71 +2842,6 @@ class SupplierLabelGeneratorWindow(QMainWindow):
             generated_count = 0
             skipped_rows = []
             
-            # 螺旋桨使用 3C 的品牌列表
-            if label_type == "螺旋桨":
-                brands = self.sheet_mapping.get("3C", {})
-                print(f"[DEBUG] 螺旋桨使用 3C 品牌: {brands}")
-            
-            # 第一步：预扫描，收集所有新的螺旋桨商品编号
-            new_propeller_skus = []
-            propeller_mapping = self.sheet_mapping.get("螺旋桨", {})
-            
-            # 总是扫描所有工作表中的螺旋桨商品编号（69码为空且商品编号是纯数字的行）
-            print(f"[DEBUG] 开始预扫描螺旋桨商品编号...")
-            scan_brands = self.sheet_mapping.get("3C", {}) if label_type == "螺旋桨" else self.sheet_mapping.get(label_type, {})
-            
-            for brand, sheets in scan_brands.items():
-                for sheet_name in sheets:
-                    resolved = resolve_sheet_name(self.current_excel_workbook, sheet_name)
-                    if not resolved:
-                        continue
-
-                    ws = self.current_excel_workbook[resolved]
-                    if ws.sheet_state != "visible":
-                        print(f"[DEBUG] 工作表已隐藏（跳过预扫描）: {resolved}")
-                        continue
-                    for row in range(2, ws.max_row + 1):
-                        sku = str(ws.cell(row, 1).value or "").strip()
-                        raw_code69 = ws.cell(row, 3).value
-                        code69 = "" if raw_code69 is None else str(raw_code69).strip()
-                        
-                        if not sku:
-                            continue
-                        
-                        # 判断是否为螺旋桨：69码为空 且 商品编号是纯数字
-                        # 69码明确填写为 0 时使用无69码模板，不按螺旋桨处理。
-                        is_no_69 = code69 == "0"
-                        is_propeller = (not is_no_69) and (not code69 or not code69.startswith("69")) and sku.isdigit()
-                        
-                        if is_propeller and sku not in propeller_mapping and sku not in new_propeller_skus:
-                            new_propeller_skus.append(sku)
-                            print(f"[DEBUG] 发现新的螺旋桨商品编号: {sku}")
-            
-            # 如果有新的螺旋桨商品编号，弹出对话框让用户输入文件名
-            if new_propeller_skus:
-                print(f"[DEBUG] 有 {len(new_propeller_skus)} 个新的螺旋桨商品编号，弹出对话框")
-                # 获取已有的文件名集合（用于检查重名）
-                existing_filenames = set(propeller_mapping.values())
-                dialog = PropellerFilenameDialog(self, new_propeller_skus, existing_filenames)
-                ok = dialog.exec() == QDialog.DialogCode.Accepted
-                
-                if ok:
-                    filenames = dialog.get_filenames()
-                    # 保存新的映射
-                    if "螺旋桨" not in self.sheet_mapping:
-                        self.sheet_mapping["螺旋桨"] = {}
-                    
-                    for sku, filename in filenames.items():
-                        if filename:  # 只保存非空的文件名
-                            self.sheet_mapping["螺旋桨"][sku] = filename
-                            new_propeller_mappings[sku] = filename
-                            print(f"[DEBUG] 保存新的螺旋桨映射: {sku} -> {filename}")
-                    
-                    self.save_sheet_mapping()
-                else:
-                    print(f"[DEBUG] 用户取消了文件名输入")
-                    return
-            
             print(f"[DEBUG] 开始遍历品牌...")
             for brand, sheets in brands.items():
                 print(f"[DEBUG] 处理品牌: {brand}, sheets: {sheets}")
@@ -2891,6 +2858,14 @@ class SupplierLabelGeneratorWindow(QMainWindow):
                         print(f"[DEBUG] 工作表已隐藏（跳过）: {sheet_name}")
                         continue
                     print(f"[DEBUG] 处理工作表: {sheet_name}")
+
+                    columns = get_label_sheet_columns(ws)
+                    missing_required = [key for key in ("sku", "brand", "number") if key not in columns]
+                    if missing_required:
+                        print(f"[DEBUG] 工作表缺少必要列 {missing_required}，跳过: {sheet_name}")
+                        continue
+                    has_code69_column = "code69" in columns
+                    has_sn_column = "sn" in columns
                     
                     if len(sheets) > 1:
                         sheet_folder = os.path.join(export_folder, sheet_name)
@@ -2902,65 +2877,62 @@ class SupplierLabelGeneratorWindow(QMainWindow):
                     
                     for row in range(2, ws.max_row + 1):
                         # 读取行数据
-                        sku = str(ws.cell(row, 1).value or "").strip()  # A列：商品编号（SKU）
-                        brand_cell = str(ws.cell(row, 2).value or "").strip()  # B列：品牌
-                        raw_code69 = ws.cell(row, 3).value
-                        code69 = "" if raw_code69 is None else str(raw_code69).strip()  # C列：69码
-                        sn_full = str(ws.cell(row, 4).value or "").strip()  # D列：SN码
-                        template_filename = str(ws.cell(row, 5).value or "").strip()  # E列：编号
+                        sku = str(ws.cell(row, columns["sku"]).value or "").strip()
+                        brand_cell = str(ws.cell(row, columns["brand"]).value or "").strip()
+                        raw_code69 = ws.cell(row, columns["code69"]).value if has_code69_column else None
+                        code69 = "" if raw_code69 is None else str(raw_code69).strip()
+                        sn_full = (
+                            str(ws.cell(row, columns["sn"]).value or "").strip()
+                            if has_sn_column else ""
+                        )
+                        template_filename = str(ws.cell(row, columns["number"]).value or "").strip()
                         
                         if not sku or not template_filename:
                             continue
                         
                         total_count += 1
                         
-                        # 判断是否为螺旋桨：69码为空 且 商品编号是纯数字
-                        # 69码明确填写为 0 时使用无69码模板，不按螺旋桨处理。
-                        is_no_69 = code69 == "0"
-                        is_propeller = (not is_no_69) and (not code69 or not code69.startswith("69")) and sku.isdigit()
+                        # 新变体可省略 69码、SN 两列；旧螺旋桨行则是两列都为空。
+                        # 两种情况统一使用不含 69/SN 的通用模板，并以“编号”命名。
+                        is_plain_label = (
+                            (not has_code69_column and not has_sn_column)
+                            or (not code69 and not sn_full)
+                        )
+                        is_no_69 = code69 == "0" and bool(sn_full)
                         
                         try:
-                            if is_propeller:
-                                # 螺旋桨标签
-                                # 编号就是产品名称本身（无序号）
+                            if is_plain_label:
+                                # 不含 69码、SN 的通用标签；编号就是产品名称和目标文件名。
                                 product_name = template_filename
                                 seq_num = "1"
                                 
-                                # 使用 label_propeller 模板
-                                template_path = default_templates["label_propeller"]
+                                template_path = default_templates["label_plain"]
                                 if not template_path.exists():
-                                    print(f"[DEBUG] 螺旋桨模板不存在: {template_path}")
+                                    print(f"[DEBUG] 通用无编码模板不存在: {template_path}")
                                     skipped_rows.append(sku)
                                     continue
                                 
                                 generator = LabelGenerator(str(template_path))
                                 generator.set_label_data(brand_cell, product_name, sku, "", "", export_date)
                                 
-                                # 根据商品编号和映射获取文件名
-                                propeller_mapping = self.sheet_mapping.get("螺旋桨", {})
-                                
-                                # 此时所有新的螺旋桨商品编号已经在预扫描阶段处理过了
-                                if sku not in propeller_mapping:
-                                    print(f"[DEBUG] 行{row}：螺旋桨商品编号 {sku} 未在映射中，跳过")
-                                    skipped_rows.append(sku)
-                                    continue
-                                
-                                filename = propeller_mapping[sku]
-                                
-                                output_filename = f"{filename}.pld"
-                                output_path = os.path.join(sheet_folder, output_filename)
-                                
-                                # 生成文件
-                                if generator.generate_pld(sheet_folder, seq_num=seq_num):
-                                    # 重命名为最终文件名
-                                    default_generated = os.path.join(sheet_folder, f"{seq_num}.{product_name}.pld")
-                                    if os.path.exists(default_generated):
+                                output_path = unique_label_output_path(sheet_folder, template_filename)
+
+                                # 在临时目录生成，避免同名“编号”先覆盖前一个文件。
+                                import tempfile
+                                with tempfile.TemporaryDirectory(prefix=".label_", dir=sheet_folder) as temp_dir:
+                                    generated = generator.generate_pld(temp_dir, seq_num=seq_num)
+                                    default_generated = os.path.join(temp_dir, f"{seq_num}.{product_name}.pld")
+                                    if generated and os.path.exists(default_generated):
                                         shutil.move(default_generated, output_path)
+                                    else:
+                                        generated = False
+
+                                if generated:
                                     
                                     generated_count += 1
-                                    print(f"[DEBUG] 生成螺旋桨标签: {output_path}")
+                                    print(f"[DEBUG] 生成通用无编码标签: {output_path}")
                                 else:
-                                    print(f"[DEBUG] 行{row}：生成螺旋桨标签失败")
+                                    print(f"[DEBUG] 行{row}：生成通用无编码标签失败")
                                     skipped_rows.append(sku)
                             else:
                                 # 3C/玩具标签
@@ -3047,15 +3019,7 @@ class SupplierLabelGeneratorWindow(QMainWindow):
             # 显示统计信息
             self.show_export_summary(total_count, generated_count, {}, skipped_rows)
             
-            # 检查是否有新的螺旋桨映射被保存
-            if new_propeller_mappings:
-                msg = "已保存以下新的螺旋桨映射:\n\n"
-                for sku, filename in list(new_propeller_mappings.items())[:10]:
-                    msg += f"  • {sku} -> {filename}\n"
-                if len(new_propeller_mappings) > 10:
-                    msg += f"  ... 还有 {len(new_propeller_mappings) - 10} 个\n"
-                QMessageBox.information(self, "螺旋桨映射", msg)
-        
+
         except Exception as e:
             print(f"[DEBUG] 生成标签失败: {str(e)}")
             import traceback
@@ -3845,8 +3809,7 @@ class SupplierLabelGeneratorWindow(QMainWindow):
             "玩具": {
                 "外星人": ["外仓库配货表"],
                 "兽模型": ["兽仓库配货表"]
-            },
-            "螺旋桨": {}  # 螺旋桨映射（商品编号 -> 模板文件名）
+            }
         }
     
     def show_sheet_mapping_dialog(self):
@@ -4019,7 +3982,7 @@ class SupplierLabelGeneratorWindow(QMainWindow):
                 # 获取螺旋桨模板路径（使用相对路径）
                 import pathlib
                 gui_dir = _app_base_dir()
-                template_path = gui_dir / "templates" / "label_propeller.pld"
+                template_path = gui_dir / "templates" / PLAIN_LABEL_TEMPLATE_NAME
                 
                 if not template_path.exists():
                     error_msg = f"生成标签失败\n\n找不到螺旋桨模板文件。请确保模板文件存在于:\n{template_path}"
@@ -4790,7 +4753,7 @@ class LabelDialog(QDialog):
                         try:
                             # 获取螺旋桨模板路径
                             gui_dir = _app_base_dir()
-                            template_path = gui_dir / "templates" / "label_propeller.pld"
+                            template_path = gui_dir / "templates" / PLAIN_LABEL_TEMPLATE_NAME
                             
                             if not template_path.exists():
                                 raise Exception(f"找不到螺旋桨模板文件: {template_path}")
@@ -4960,7 +4923,7 @@ class LabelDialog(QDialog):
                 try:
                     # 获取螺旋桨模板路径
                     gui_dir = _app_base_dir()
-                    template_path = gui_dir / "templates" / "label_propeller.pld"
+                    template_path = gui_dir / "templates" / PLAIN_LABEL_TEMPLATE_NAME
                     
                     if not template_path.exists():
                         raise Exception(f"找不到螺旋桨模板文件: {template_path}")
@@ -5178,7 +5141,7 @@ class LabelDialog(QDialog):
         try:
             # 获取螺旋桨模板路径
             gui_dir = _app_base_dir()
-            template_path = gui_dir / "templates" / "label_propeller.pld"
+            template_path = gui_dir / "templates" / PLAIN_LABEL_TEMPLATE_NAME
             
             if not template_path.exists():
                 raise Exception(f"找不到螺旋桨模板文件: {template_path}")
@@ -5988,7 +5951,7 @@ class SheetMappingDialog(QDialog):
         type_layout = QHBoxLayout()
         type_layout.addWidget(QLabel("工作表类型:"))
         self.type_combo = ModernComboBox()
-        self.type_combo.addItems(["3C", "玩具", "螺旋桨"])
+        self.type_combo.addItems(["3C", "玩具"])
         self.type_combo.currentTextChanged.connect(self.on_type_changed)
         type_layout.addWidget(self.type_combo)
         type_layout.addStretch()

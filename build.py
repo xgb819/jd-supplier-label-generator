@@ -2,7 +2,7 @@
 """
 JD Supplier Label Generator 构建脚本
 1. 使用 PyInstaller 打包 gui_app.py 为 dist/JD Supplier Label Generator.exe
-2. 使用 Inno Setup 打包为安装程序 dist/jd-supplier-label-generator-v1.1.1-20261023.exe（需已安装 Inno Setup）
+2. 使用 Inno Setup 打包为安装程序 dist/jd-supplier-label-generator-v1.1.2-20261103.exe（需已安装 Inno Setup）
 """
 import subprocess
 import sys
