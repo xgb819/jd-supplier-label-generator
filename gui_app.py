@@ -5971,6 +5971,35 @@ class SheetMappingDialog(QDialog):
         export_path_layout.addWidget(browse_export_path_btn)
         generation_layout.addLayout(export_path_layout, 8, 1)
 
+        # “生成选项”页没有确定按钮，所有项目修改后立即生效并保存。
+        self.generation_type_combo.currentTextChanged.connect(
+            self._save_generation_options
+        )
+        self.generation_year_input.editingFinished.connect(
+            self._save_generation_options
+        )
+        self.generation_date_input.editingFinished.connect(
+            self._save_generation_options
+        )
+        self.generation_label_checkbox.toggled.connect(
+            self._save_generation_options
+        )
+        self.generation_box_checkbox.toggled.connect(
+            self._save_generation_options
+        )
+        self.generation_order_checkbox.toggled.connect(
+            self._save_generation_options
+        )
+        self.recognize_sheet_combo.currentTextChanged.connect(
+            self._save_generation_options
+        )
+        self.recognize_cell_input.editingFinished.connect(
+            self._save_generation_options
+        )
+        self.box_recognize_sheet_combo.currentTextChanged.connect(
+            self._save_generation_options
+        )
+
         version_row_height = self.generation_type_combo.sizeHint().height()
         for row in range(3):
             version_layout.setRowMinimumHeight(row, version_row_height)
@@ -6073,6 +6102,66 @@ class SheetMappingDialog(QDialog):
         if checked:
             self.generation_date_input.setText(beijing_date_mmdd())
         self.generation_date_input.setEnabled(not checked)
+        self.parent_gui.sync_current_date = bool(checked)
+        self.parent_gui.export_date_input.setText(
+            beijing_date_mmdd()
+            if checked else self.generation_date_input.text().strip()
+        )
+        self.parent_gui.config_manager.set(
+            'sync_current_date', self.parent_gui.sync_current_date
+        )
+        self.parent_gui.config_manager.save_config()
+
+    def _save_generation_options(self, *_args):
+        """立即应用并保存“生成选项”页当前值。"""
+        self.parent_gui.preview_type_combo.setCurrentText(
+            self.generation_type_combo.currentText()
+        )
+        self.parent_gui.export_year_input.setText(
+            self.generation_year_input.text().strip()
+        )
+        generation_date = (
+            beijing_date_mmdd()
+            if self.sync_current_date_checkbox.isChecked()
+            else self.generation_date_input.text().strip()
+        )
+        self.parent_gui.export_date_input.setText(generation_date)
+        self.parent_gui.output_label_checkbox.setChecked(
+            self.generation_label_checkbox.isChecked()
+        )
+        self.parent_gui.output_box_checkbox.setChecked(
+            self.generation_box_checkbox.isChecked()
+        )
+        self.parent_gui.output_order_checkbox.setChecked(
+            self.generation_order_checkbox.isChecked()
+        )
+
+        cell_text = self.recognize_cell_input.text().strip().upper()
+        match = re.fullmatch(r'([A-Z]+)(\d+)', cell_text)
+        if match:
+            column_number = 0
+            for char in match.group(1):
+                column_number = column_number * 26 + ord(char) - ord('A') + 1
+            self.parent_gui.config_manager.set('recognize_config', {
+                'sheet_name': (
+                    self.recognize_sheet_combo.currentText()
+                    or self.recognize_config.get('sheet_name', '勿改动！机型')
+                ),
+                'row': int(match.group(2)),
+                'column': column_number,
+            })
+
+        self.parent_gui.config_manager.set('box_recognize_config', {
+            'sheet_name': (
+                self.box_recognize_sheet_combo.currentText()
+                or self.box_recognize_config.get('sheet_name', '箱唛')
+            )
+        })
+        new_export_path = self.export_path_input.text().strip()
+        if new_export_path:
+            self.parent_gui.export_path = new_export_path
+            self.parent_gui.config_manager.set('export_path', new_export_path)
+        self.parent_gui.config_manager.save_config()
 
     def on_type_changed(self, type_name):
         """类型改变时更新表格"""
@@ -6402,6 +6491,7 @@ class SheetMappingDialog(QDialog):
         )
         if folder_path:
             self.export_path_input.setText(folder_path.replace('/', '\\'))
+            self._save_generation_options()
 
     def check_for_updates(self):
         """复用原有的更新检查逻辑。"""
