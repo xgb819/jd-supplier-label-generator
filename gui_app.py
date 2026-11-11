@@ -20,6 +20,19 @@ GITHUB_LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/r
 USER_AGENT = f"{APP_SLUG}/{APP_VERSION}"
 
 
+def beijing_now():
+    """返回北京时间，不依赖操作系统本地时区设置。"""
+    import datetime
+
+    china_standard_time = datetime.timezone(datetime.timedelta(hours=8))
+    return datetime.datetime.now(china_standard_time)
+
+
+def beijing_date_mmdd():
+    """返回北京时间当天日期，格式为 MMDD。"""
+    return beijing_now().strftime("%m%d")
+
+
 APP_STYLE_SHEET = """
 QWidget {
     color: #1f2937;
@@ -1336,6 +1349,9 @@ class SupplierLabelGeneratorWindow(QMainWindow):
         # 应用版本和导出路径
         self.app_version = APP_VERSION
         self.export_path = self.config_manager.get('export_path', os.path.expanduser('~/Desktop'))
+        self.sync_current_date = bool(
+            self.config_manager.get('sync_current_date', True)
+        )
 
         self.init_ui()
         # 主窗口高度随当前工具页的必要内容调整。
@@ -2030,7 +2046,7 @@ class SupplierLabelGeneratorWindow(QMainWindow):
             detected_date, detected_year = self.extract_date_from_workbook(workbook, detected_type)
             print(f"[DEBUG] 识别结果: detected_date={detected_date}, detected_year={detected_year}")
             
-            if detected_date:
+            if detected_date and not self.sync_current_date:
                 self.export_date_input.setText(detected_date)
             if detected_year:
                 self.export_year_input.setText(detected_year)
@@ -2570,15 +2586,14 @@ class SupplierLabelGeneratorWindow(QMainWindow):
         options_layout.addWidget(QLabel("年份"), 1, 0)
         self.export_year_input = QLineEdit()
         self.export_year_input.setPlaceholderText("YYYY")
-        import datetime
-        current_year = datetime.datetime.now().year
+        current_year = beijing_now().year
         self.export_year_input.setText(str(current_year))
         options_layout.addWidget(self.export_year_input, 1, 1)
 
         options_layout.addWidget(QLabel("日期"), 2, 0)
         self.export_date_input = QLineEdit()
         self.export_date_input.setPlaceholderText("MMDD")
-        self.export_date_input.setText(datetime.datetime.now().strftime("%m%d"))
+        self.export_date_input.setText(beijing_date_mmdd())
         options_layout.addWidget(self.export_date_input, 2, 1)
 
         options_layout.addWidget(QLabel("生成内容"), 3, 0)
@@ -2702,6 +2717,8 @@ class SupplierLabelGeneratorWindow(QMainWindow):
         print(f"[DEBUG] label_type={label_type}")
         
         # 检查是否输入了日期
+        if self.sync_current_date:
+            self.export_date_input.setText(beijing_date_mmdd())
         export_date = self.export_date_input.text().strip()
         if not export_date:
             QMessageBox.warning(self, "警告", "请输入日期（MMDD 格式）")
@@ -5852,11 +5869,26 @@ class SheetMappingDialog(QDialog):
         generation_layout.addWidget(self.generation_year_input, 1, 1)
 
         generation_layout.addWidget(QLabel("日期:"), 2, 0)
+        generation_date_layout = QHBoxLayout()
+        generation_date_layout.setContentsMargins(0, 0, 0, 0)
+        generation_date_layout.setSpacing(8)
         self.generation_date_input = QLineEdit(
             self.parent_gui.export_date_input.text()
         )
         self.generation_date_input.setPlaceholderText("MMDD")
-        generation_layout.addWidget(self.generation_date_input, 2, 1)
+        generation_date_layout.addWidget(self.generation_date_input, 1)
+        self.sync_current_date_checkbox = QCheckBox("同步当天日期")
+        self.sync_current_date_checkbox.setChecked(
+            self.parent_gui.sync_current_date
+        )
+        self.sync_current_date_checkbox.toggled.connect(
+            self._on_sync_current_date_changed
+        )
+        generation_date_layout.addWidget(self.sync_current_date_checkbox)
+        generation_layout.addLayout(generation_date_layout, 2, 1)
+        self._on_sync_current_date_changed(
+            self.sync_current_date_checkbox.isChecked()
+        )
 
         generation_output_layout = QHBoxLayout()
         generation_output_layout.setSpacing(18)
@@ -6035,6 +6067,12 @@ class SheetMappingDialog(QDialog):
         if self.generation_order_checkbox.isChecked():
             self.generation_label_checkbox.setChecked(False)
             self.generation_box_checkbox.setChecked(False)
+
+    def _on_sync_current_date_changed(self, checked):
+        """同步北京时间当天日期，并控制日期输入框是否可编辑。"""
+        if checked:
+            self.generation_date_input.setText(beijing_date_mmdd())
+        self.generation_date_input.setEnabled(not checked)
 
     def on_type_changed(self, type_name):
         """类型改变时更新表格"""
@@ -6412,8 +6450,17 @@ class SheetMappingDialog(QDialog):
         self.parent_gui.export_year_input.setText(
             self.generation_year_input.text().strip()
         )
-        self.parent_gui.export_date_input.setText(
-            self.generation_date_input.text().strip()
+        self.parent_gui.sync_current_date = (
+            self.sync_current_date_checkbox.isChecked()
+        )
+        generation_date = (
+            beijing_date_mmdd()
+            if self.parent_gui.sync_current_date
+            else self.generation_date_input.text().strip()
+        )
+        self.parent_gui.export_date_input.setText(generation_date)
+        self.parent_gui.config_manager.set(
+            'sync_current_date', self.parent_gui.sync_current_date
         )
         self.parent_gui.output_label_checkbox.setChecked(
             self.generation_label_checkbox.isChecked()
@@ -6428,7 +6475,7 @@ class SheetMappingDialog(QDialog):
         if new_export_path and new_export_path != self.parent_gui.export_path:
             self.parent_gui.export_path = new_export_path
             self.parent_gui.config_manager.set('export_path', new_export_path)
-            self.parent_gui.config_manager.save_config()
+        self.parent_gui.config_manager.save_config()
         self.accept()
     
     def get_mapping(self):
