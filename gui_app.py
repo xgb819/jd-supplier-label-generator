@@ -983,7 +983,7 @@ def resolve_sheet_name(workbook, desired_name: str):
     return None
 
 
-PLAIN_LABEL_TEMPLATE_NAME = "label_plain.pld"
+PLAIN_LABEL_TEMPLATE_NAME = "label_plain_60x40mm.pld"
 
 
 def get_label_sheet_columns(worksheet):
@@ -1448,7 +1448,9 @@ class SupplierLabelGeneratorWindow(QMainWindow):
         title = QLabel("工作区")
         title.setObjectName("sectionTitle")
 
-        self.return_file_name_label = ElidedLabel("尚未导入 3 个工作表文件")
+        self.return_file_name_label = ElidedLabel(
+            "已导入 0/3，缺少退货订单明细、物流预约数据、机型表"
+        )
         self.return_file_name_label.setObjectName("mutedText")
         self.return_file_name_label.setAlignment(
             Qt.AlignRight | Qt.AlignVCenter
@@ -1538,10 +1540,8 @@ class SupplierLabelGeneratorWindow(QMainWindow):
         imported_count = 3 - len(missing)
         if not missing:
             status = "已导入 3/3 个工作表文件"
-        elif imported_count:
-            status = f"已导入 {imported_count}/3，缺少{'、'.join(missing)}"
         else:
-            status = "尚未导入 3 个工作表文件"
+            status = f"已导入 {imported_count}/3，缺少{'、'.join(missing)}"
         self.return_file_name_label.setText(status)
         self.return_file_name_label.setToolTip("\n".join(
             f"{names[key]}：{os.path.basename(path)}"
