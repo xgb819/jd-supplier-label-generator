@@ -18,7 +18,7 @@
 
 ### 方式一：使用安装程序（推荐）
 
-下载最新的 `jd-supplier-label-generator-v1.1.2-20261103.exe` 并运行安装程序。
+下载最新的 `jd-supplier-label-generator-v1.1.3-20261111.exe` 并运行安装程序。
 
 ### 方式二：从源代码运行
 

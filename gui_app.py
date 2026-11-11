@@ -13,7 +13,7 @@ from typing import Dict
 
 APP_NAME = "京东供应商标签生成器"
 APP_SLUG = "jd-supplier-label-generator"
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3"
 GITHUB_REPOSITORY = "xgb819/jd-supplier-label-generator"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPOSITORY}/releases"
 GITHUB_LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest"

@@ -1,6 +1,6 @@
 [Setup]
 AppName=京东供应商标签生成器
-AppVersion=1.1.2
+AppVersion=1.1.3
 AppPublisher=xgb819
 AppPublisherURL=https://github.com/xgb819/jd-supplier-label-generator
 AppSupportURL=https://github.com/xgb819/jd-supplier-label-generator
@@ -11,7 +11,7 @@ AllowNoIcons=yes
 LicenseFile=LICENSE
 SetupIconFile=assets\favicon.ico
 OutputDir=dist
-OutputBaseFilename=jd-supplier-label-generator-v1.1.2-20261103
+OutputBaseFilename=jd-supplier-label-generator-v1.1.3-20261111
 Compression=zip
 SolidCompression=yes
 PrivilegesRequired=lowest
